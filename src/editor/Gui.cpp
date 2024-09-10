@@ -10523,7 +10523,6 @@ void Gui::drawLightMapTool()
 					}
 				}
 
-
 			}
 			if (face)
 			{
