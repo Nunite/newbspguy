@@ -269,6 +269,7 @@ Renderer::Renderer()
 	img_dat = NULL;
 
 
+
 	missingTex_rgba->upload();
 	aaatriggerTex_rgba->upload();
 	aaatriggerTex->upload();
@@ -1820,6 +1821,14 @@ void Renderer::shortcutControls()
 	{
 		gui->showGOTOWidget = !gui->showGOTOWidget;
 		gui->showGOTOWidget_update = true;
+	}
+	//ctrl+l
+	if (anyCtrlPressed && pressed[GLFW_KEY_L] && !oldPressed[GLFW_KEY_L])
+	{
+		gui->showLightmapEditorWidget = !gui->showLightmapEditorWidget;
+		gui->app->pickMode = PICK_FACE;
+		pickCount++;
+		gui->showLightmapEditorUpdate = true;
 	}
 	if (anyAltPressed && anyEnterPressed)
 	{

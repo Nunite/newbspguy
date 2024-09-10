@@ -18,4 +18,7 @@
     <LocalDebuggerCommandArguments>"d:\SteamLibrary\steamapps\common\Half-Life\cstrike\maps\de_dust2.bsp"</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
+  <PropertyGroup>
+    <ShowAllFiles>false</ShowAllFiles>
+  </PropertyGroup>
 </Project>

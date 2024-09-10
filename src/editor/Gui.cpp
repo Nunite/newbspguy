@@ -18,6 +18,10 @@
 #include <lodepng.h>
 #include <execution>
 
+// 定义全局变量来存储笔刷大小和取样半径
+int brushSize = 1;    // 笔刷大小
+int sampleRadius = 3; // 取样半径
+
 float g_tooltip_delay = 0.6f; // time in seconds before showing a tooltip
 
 bool filterNeeded = true;
@@ -86,6 +90,23 @@ void Gui::init()
 	lodepng_decode32_file(&icon_data, &w, &h, "./pictures/leaf.png");
 	leafIconTexture = new Texture(w, h, icon_data, "leafIcon", true);
 	leafIconTexture->upload();
+	lodepng_decode32_file(&icon_data, &w, &h, "./pictures/mouse_left.png");
+	mouse_leftTexture = new Texture(w, h, icon_data, "mouse_left", true);
+	mouse_leftTexture->upload();
+    lodepng_decode32_file(&icon_data, &w, &h, "./pictures/mouse_right.png");
+	mouse_rightTexture = new Texture(w, h, icon_data, "mouse_right", true);
+	mouse_rightTexture->upload();
+    lodepng_decode32_file(&icon_data, &w, &h, "./pictures/mouse_middle.png");
+	mouse_middleTexture = new Texture(w, h, icon_data, "mouse_middle", true);
+	mouse_middleTexture->upload();
+}
+
+void Gui::destroy()
+{
+	// Cleanup
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
 }
 
 ImVec4 imguiColorFromConsole(unsigned int colors)
@@ -4923,7 +4944,8 @@ void Gui::drawMenuBar()
 				{
 					showTextureBrowser = !showTextureBrowser;
 				}
-				if (ImGui::MenuItem(get_localized_string(LANG_0599).c_str(), "", showLightmapEditorWidget))
+				//ctrl+l
+				if (ImGui::MenuItem(get_localized_string(LANG_0599).c_str(), get_localized_string(LANG_1181).c_str(), showLightmapEditorWidget))
 				{
 					showLightmapEditorWidget = !showLightmapEditorWidget;
 					app->pickMode = PICK_FACE;
@@ -8813,7 +8835,7 @@ void Gui::drawAbout()
 	{
 		ImGui::InputText(get_localized_string(LANG_0822).c_str(), &g_version_string, ImGuiInputTextFlags_ReadOnly);
 
-		static char author[] = "w00tguy(bspguy), karaulov(newbspguy)";
+		static char author[] = "w00tguy(bspguy), karaulov(newbspguy),Lws(Utility tool:Lightmap change)";
 		ImGui::InputText(get_localized_string(LANG_0823).c_str(), author, strlen(author), ImGuiInputTextFlags_ReadOnly);
 		if (ImGui::IsItemHovered())
 		{
@@ -8837,6 +8859,15 @@ void Gui::drawAbout()
 		{
 			ImGui::BeginTooltip();
 			ImGui::TextUnformatted(url2);
+			ImGui::EndTooltip();
+		}
+
+		static char url3[] = "https://github.com/Nunite/newbspguy (Lws)";
+		ImGui::InputText((get_localized_string(LANG_0824) + "##3").c_str(), url3, strlen(url3), ImGuiInputTextFlags_ReadOnly);
+		if (ImGui::IsItemHovered())
+		{
+			ImGui::BeginTooltip();
+			ImGui::TextUnformatted(url3);
 			ImGui::EndTooltip();
 		}
 
@@ -10353,7 +10384,7 @@ void Gui::drawLightMapTool()
 {
 	static float colourPatch[3];
 	static Texture* currentlightMap[MAX_LIGHTMAPS] = { NULL };
-	static float windowWidth = 500.0f;
+	static float windowWidth = 550.0f;
 	static float windowHeight = 600.0f;
 	static int lightmap_count = 0;
 	static bool needPickColor = false;
@@ -10380,10 +10411,12 @@ void Gui::drawLightMapTool()
 
 	if (ImGui::Begin(fmt::format("{}###LIGHTMAP_WIDGET", get_localized_string(LANG_0599)).c_str(), &showLightmapEditorWidget))
 	{
+		/*改为中键获取色彩
 		if (needPickColor)
 		{
 			ImGui::TextDisabled(get_localized_string(LANG_0863).c_str());
 		}
+		*/
 		Bsp* map = app->getSelectedMap();
 		if (map)
 		{
@@ -10446,6 +10479,29 @@ void Gui::drawLightMapTool()
 					ImGui::TextDisabled(light_names[2]);
 					ImGui::Separator();
 					ImGui::TextDisabled(fmt::format("Offest:{}", light_offsets[i]).c_str());
+					//Tip Chinese
+
+// 显示左键图标
+					ImGui::Image((void*)(intptr_t)mouse_leftTexture->id, ImVec2(48, 48)); // 显示左键图标
+					if (ImGui::IsItemHovered()) { // 检查图标是否被鼠标悬停
+						ImGui::SetTooltip(get_localized_string("LANG_1183").c_str()); // 设置提示文本
+					}
+					ImGui::SameLine(); // 在同一行显示下一个图标
+
+					// 显示右键图标
+					ImGui::Image((void*)(intptr_t)mouse_rightTexture->id, ImVec2(48, 48)); // 显示右键图标
+					if (ImGui::IsItemHovered()) { // 检查图标是否被鼠标悬停
+						ImGui::SetTooltip(get_localized_string("LANG_1184").c_str()); // 设置提示文本
+					}
+					ImGui::SameLine(); // 在同一行显示下一个图标
+
+					// 显示中键图标
+					ImGui::Image((void*)(intptr_t)mouse_middleTexture->id, ImVec2(48, 48)); // 显示中键图标
+					if (ImGui::IsItemHovered()) { // 检查图标是否被鼠标悬停
+						ImGui::SetTooltip(get_localized_string("LANG_1182").c_str()); // 设置提示文本
+					}
+
+
 				}
 
 				if (i == 2)
@@ -10476,8 +10532,17 @@ void Gui::drawLightMapTool()
 					ImGui::Dummy(ImVec2(200, 200));
 					continue;
 				}
-				// 检查光照贴图是否被点击或鼠标是否按住
-				if (ImGui::ImageButton((std::to_string(i) + "_lightmap").c_str(), (ImTextureID)(long long)currentlightMap[i]->id, imgSize, ImVec2(0, 0), ImVec2(1, 1)) || ImGui::IsMouseDown(0))
+
+
+				// 设置滑动条宽度
+				ImGui::SetNextItemWidth(80); // 调整为你想要的宽度
+				ImGui::SliderInt("Brush Size", &brushSize, 1, 10);  // 笔刷大小范围：1 - 10
+
+				ImGui::SetNextItemWidth(80); // 再次调整宽度
+				ImGui::SliderInt("Sample Radius", &sampleRadius, 1, 10); // 取样半径范围：1 - 10
+
+				if (ImGui::ImageButton((std::to_string(i) + "_lightmap").c_str(), (ImTextureID)(long long)currentlightMap[i]->id, imgSize, ImVec2(0, 0), ImVec2(1, 1)) ||
+					ImGui::IsMouseDown(0) || ImGui::IsMouseDown(1) || ImGui::IsMouseDown(2))
 				{
 					// 获取光照贴图的显示区域尺寸
 					float itemWidth = ImGui::GetItemRectSize().x;
@@ -10498,27 +10563,89 @@ void Gui::drawLightMapTool()
 						imageX = std::clamp(imageX, 0, currentlightMap[i]->width - 1);
 						imageY = std::clamp(imageY, 0, currentlightMap[i]->height - 1);
 
-						// 打印调试信息，确认点击位置是否正确
-						std::cout << "Mouse Position: (" << mouseX << ", " << mouseY << "), "
-							<< "Image Position: (" << imageX << ", " << imageY << ")" << std::endl;
-
-						// 计算像素的偏移位置
-						int offset = ArrayXYtoId(currentlightMap[i]->width, imageX, imageY);
-
-						// 确保偏移量在有效范围内
-						int maxOffset = currentlightMap[i]->width * currentlightMap[i]->height * static_cast<int>(sizeof(COLOR3));
-						offset = std::clamp(offset, 0, maxOffset - 1);
-
 						// 获取光照贴图的数据
 						COLOR3* lightData = (COLOR3*)currentlightMap[i]->get_data();
 
-						// 修改选中像素的颜色
-						lightData[offset] = COLOR3(
-							static_cast<unsigned char>(colourPatch[0] * 255.f),
-							static_cast<unsigned char>(colourPatch[1] * 255.f),
-							static_cast<unsigned char>(colourPatch[2] * 255.f));
+						// 计算当前鼠标位置对应的像素偏移量
+						int offset = ArrayXYtoId(currentlightMap[i]->width, imageX, imageY);
 
-						// 上传更新后的光照贴图
+						if (ImGui::IsMouseDown(2)) // 鼠标中键按下：拾取颜色
+						{
+							// 拾取颜色并保存到 colourPatch
+							colourPatch[0] = lightData[offset].r / 255.f;
+							colourPatch[1] = lightData[offset].g / 255.f;
+							colourPatch[2] = lightData[offset].b / 255.f;
+							needPickColor = false; // 停止拾色
+						}
+						else if (ImGui::IsMouseDown(0)) // 左键拖拽：应用选定颜色
+						{
+							int halfBrushSize = brushSize / 2;
+
+							// 遍历笔刷影响的范围并修改颜色
+							for (int x = -halfBrushSize; x <= halfBrushSize; ++x)
+							{
+								for (int y = -halfBrushSize; y <= halfBrushSize; ++y)
+								{
+									int targetX = std::clamp(imageX + x, 0, currentlightMap[i]->width - 1);
+									int targetY = std::clamp(imageY + y, 0, currentlightMap[i]->height - 1);
+
+									int targetOffset = ArrayXYtoId(currentlightMap[i]->width, targetX, targetY);
+									lightData[targetOffset] = COLOR3(
+										static_cast<unsigned char>(colourPatch[0] * 255.f),
+										static_cast<unsigned char>(colourPatch[1] * 255.f),
+										static_cast<unsigned char>(colourPatch[2] * 255.f));
+								}
+							}
+						}
+						else if (ImGui::IsMouseDown(1)) // 右键拖拽：平滑过渡
+						{
+							int halfBrushSize = brushSize / 2;
+
+							// 遍历笔刷影响的范围并进行平滑过渡
+							for (int x = -halfBrushSize; x <= halfBrushSize; ++x)
+							{
+								for (int y = -halfBrushSize; y <= halfBrushSize; ++y)
+								{
+									int targetX = std::clamp(imageX + x, 0, currentlightMap[i]->width - 1);
+									int targetY = std::clamp(imageY + y, 0, currentlightMap[i]->height - 1);
+
+									int targetOffset = ArrayXYtoId(currentlightMap[i]->width, targetX, targetY);
+
+									// 平滑过渡逻辑：获取相邻像素的颜色进行取样
+									int sampleCount = 0;
+									int totalR = 0, totalG = 0, totalB = 0;
+
+									// 获取取样半径内的所有相邻像素的平均颜色
+									for (int sampleX = -sampleRadius; sampleX <= sampleRadius; ++sampleX)
+									{
+										for (int sampleY = -sampleRadius; sampleY <= sampleRadius; ++sampleY)
+										{
+											int neighborX = std::clamp(targetX + sampleX, 0, currentlightMap[i]->width - 1);
+											int neighborY = std::clamp(targetY + sampleY, 0, currentlightMap[i]->height - 1);
+											int neighborOffset = ArrayXYtoId(currentlightMap[i]->width, neighborX, neighborY);
+
+											// 累加相邻像素的颜色
+											totalR += lightData[neighborOffset].r;
+											totalG += lightData[neighborOffset].g;
+											totalB += lightData[neighborOffset].b;
+											sampleCount++;
+										}
+									}
+
+									// 计算相邻像素的平均颜色
+									totalR /= sampleCount;
+									totalG /= sampleCount;
+									totalB /= sampleCount;
+
+									// 对选定像素块应用平滑插值
+									lightData[targetOffset].r = static_cast<unsigned char>((lightData[targetOffset].r + totalR) / 2);
+									lightData[targetOffset].g = static_cast<unsigned char>((lightData[targetOffset].g + totalG) / 2);
+									lightData[targetOffset].b = static_cast<unsigned char>((lightData[targetOffset].b + totalB) / 2);
+								}
+							}
+						}
+
+						// 只有在修改完成后上传纹理
 						currentlightMap[i]->upload(Texture::TEXTURE_TYPE::TYPE_LIGHTMAP);
 					}
 				}

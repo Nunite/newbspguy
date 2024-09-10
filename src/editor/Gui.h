@@ -52,6 +52,7 @@ public:
 	Gui(Renderer* app);
 
 	void init();
+	void destroy();
 	void draw();
 
 	void openContextMenu(bool empty);
@@ -99,6 +100,11 @@ private:
 	Texture* objectIconTexture;
 	Texture* faceIconTexture;
 	Texture* leafIconTexture;
+	Texture* mouse_leftTexture;
+    Texture* mouse_rightTexture;
+	Texture* mouse_middleTexture;
+
+
 
 	bool badSurfaceExtents = false;
 	bool lightmapTooLarge = false;
