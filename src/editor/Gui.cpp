@@ -10476,7 +10476,6 @@ void Gui::drawLightMapTool()
 					ImGui::Dummy(ImVec2(200, 200));
 					continue;
 				}
-
 				// 检查光照贴图是否被点击或鼠标是否按住
 				if (ImGui::ImageButton((std::to_string(i) + "_lightmap").c_str(), (ImTextureID)(long long)currentlightMap[i]->id, imgSize, ImVec2(0, 0), ImVec2(1, 1)) || ImGui::IsMouseDown(0))
 				{
