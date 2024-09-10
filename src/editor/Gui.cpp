@@ -10477,56 +10477,54 @@ void Gui::drawLightMapTool()
 					continue;
 				}
 
-				if (ImGui::ImageButton((std::to_string(i) + "_lightmap").c_str(), (ImTextureID)(long long)currentlightMap[i]->id, imgSize, ImVec2(0, 0), ImVec2(1, 1)))
+				// 检查光照贴图是否被点击或鼠标是否按住
+				if (ImGui::ImageButton((std::to_string(i) + "_lightmap").c_str(), (ImTextureID)(long long)currentlightMap[i]->id, imgSize, ImVec2(0, 0), ImVec2(1, 1)) || ImGui::IsMouseDown(0))
 				{
-					float itemwidth = ImGui::GetItemRectMax().x - ImGui::GetItemRectMin().x;
-					float itemheight = ImGui::GetItemRectMax().y - ImGui::GetItemRectMin().y;
+					// 获取光照贴图的显示区域尺寸
+					float itemWidth = ImGui::GetItemRectSize().x;
+					float itemHeight = ImGui::GetItemRectSize().y;
 
-					float mousex = ImGui::GetItemRectMax().x - ImGui::GetMousePos().x;
-					float mousey = ImGui::GetItemRectMax().y - ImGui::GetMousePos().y;
+					// 获取鼠标相对光照贴图的偏移
+					float mouseX = ImGui::GetMousePos().x - ImGui::GetItemRectMin().x;
+					float mouseY = ImGui::GetMousePos().y - ImGui::GetItemRectMin().y;
 
-					int imagex = (int)round((currentlightMap[i]->width - ((currentlightMap[i]->width / itemwidth) * mousex)) - 0.5f);
-					int imagey = (int)round((currentlightMap[i]->height - ((currentlightMap[i]->height / itemheight) * mousey)) - 0.5f);
+					// 检查鼠标是否在光照贴图的有效区域内
+					if (mouseX >= 0 && mouseX <= itemWidth && mouseY >= 0 && mouseY <= itemHeight)
+					{
+						// 将鼠标坐标映射到光照贴图的像素坐标
+						int imageX = static_cast<int>((mouseX / itemWidth) * currentlightMap[i]->width);
+						int imageY = static_cast<int>((mouseY / itemHeight) * currentlightMap[i]->height);
 
-					if (imagex < 0)
-					{
-						imagex = 0;
-					}
-					if (imagey < 0)
-					{
-						imagey = 0;
-					}
-					if (imagex > currentlightMap[i]->width)
-					{
-						imagex = currentlightMap[i]->width;
-					}
-					if (imagey > currentlightMap[i]->height)
-					{
-						imagey = currentlightMap[i]->height;
-					}
+						// 确保像素坐标在有效范围内
+						imageX = std::clamp(imageX, 0, currentlightMap[i]->width - 1);
+						imageY = std::clamp(imageY, 0, currentlightMap[i]->height - 1);
 
-					int offset = ArrayXYtoId(currentlightMap[i]->width, imagex, imagey);
-					if (offset >= currentlightMap[i]->width * currentlightMap[i]->height * (int)sizeof(COLOR3))
-						offset = (currentlightMap[i]->width * currentlightMap[i]->height * (int)sizeof(COLOR3)) - 1;
-					if (offset < 0)
-						offset = 0;
+						// 打印调试信息，确认点击位置是否正确
+						std::cout << "Mouse Position: (" << mouseX << ", " << mouseY << "), "
+							<< "Image Position: (" << imageX << ", " << imageY << ")" << std::endl;
 
-					COLOR3* lighdata = (COLOR3*)currentlightMap[i]->get_data();
+						// 计算像素的偏移位置
+						int offset = ArrayXYtoId(currentlightMap[i]->width, imageX, imageY);
 
-					if (needPickColor)
-					{
-						colourPatch[0] = lighdata[offset].r / 255.f;
-						colourPatch[1] = lighdata[offset].g / 255.f;
-						colourPatch[2] = lighdata[offset].b / 255.f;
-						needPickColor = false;
-					}
-					else
-					{
-						lighdata[offset] = COLOR3((unsigned char)(colourPatch[0] * 255.f),
-							(unsigned char)(colourPatch[1] * 255.f), (unsigned char)(colourPatch[2] * 255.f));
+						// 确保偏移量在有效范围内
+						int maxOffset = currentlightMap[i]->width * currentlightMap[i]->height * static_cast<int>(sizeof(COLOR3));
+						offset = std::clamp(offset, 0, maxOffset - 1);
+
+						// 获取光照贴图的数据
+						COLOR3* lightData = (COLOR3*)currentlightMap[i]->get_data();
+
+						// 修改选中像素的颜色
+						lightData[offset] = COLOR3(
+							static_cast<unsigned char>(colourPatch[0] * 255.f),
+							static_cast<unsigned char>(colourPatch[1] * 255.f),
+							static_cast<unsigned char>(colourPatch[2] * 255.f));
+
+						// 上传更新后的光照贴图
 						currentlightMap[i]->upload(Texture::TEXTURE_TYPE::TYPE_LIGHTMAP);
 					}
 				}
+
+
 			}
 			if (face)
 			{
