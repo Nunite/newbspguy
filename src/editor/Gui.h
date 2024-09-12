@@ -62,7 +62,6 @@ public:
 	void pasteLightmap();
 	void refresh();
 
-
 	bool showDebugWidget = false;
 	bool showKeyvalueWidget = false;
 	bool showTransformWidget = false;
@@ -73,6 +72,7 @@ public:
 	int showImportMapWidget_Type = 0;
 	bool showImportMapWidget = false;
 	bool showMergeMapWidget = false;
+	bool showBspList = false;
 	bool showLimitsWidget = true;
 	bool showFaceEditWidget = false;
 	bool showLightmapEditorWidget = false;
@@ -103,6 +103,7 @@ private:
 	Texture* mouse_leftTexture;
     Texture* mouse_rightTexture;
 	Texture* mouse_middleTexture;
+	Texture* changebrushTexture;
 
 
 
@@ -125,6 +126,7 @@ private:
 	bool pasteTextureNow = false;
 
 	void drawBspContexMenu();
+	void processFile(const std::filesystem::path& filePath);
 	void drawMenuBar();
 	void drawToolbar();
 	void drawFpsOverlay();
@@ -146,6 +148,7 @@ private:
 	void drawMergeWindow();
 	void drawLimits();
 	void drawLightMapTool();
+	void drawBspList();
 	void drawFaceEditorWidget();
 	void drawLimitTab(Bsp* map, int sortMode);
 	void drawEntityReport();

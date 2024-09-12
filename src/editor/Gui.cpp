@@ -21,12 +21,36 @@
 // 定义全局变量来存储笔刷大小和取样半径
 int brushSize = 1;    // 笔刷大小
 int sampleRadius = 3; // 取样半径
-
+std::string searchQuery;  // 用于存储搜索的查询字符串
 float g_tooltip_delay = 0.6f; // time in seconds before showing a tooltip
 
 bool filterNeeded = true;
 
 std::string iniPath;
+
+// 将字符串转换为小写
+std::string toLower(const std::string& str) {
+	std::string lowerStr = str;
+	std::transform(lowerStr.begin(), lowerStr.end(), lowerStr.begin(), [](unsigned char c) { return std::tolower(c); });
+	return lowerStr;
+}
+
+// 函数：获取目录下的 .bsp 文件
+std::vector<std::string> getBspFiles(const std::string& directory) {
+    std::vector<std::string> bspFiles;
+    std::filesystem::path path(directory);
+
+    // 检查路径是否存在并且是目录
+    if (std::filesystem::exists(path) && std::filesystem::is_directory(path)) {
+        for (const auto& entry : std::filesystem::directory_iterator(path)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".bsp") {
+                bspFiles.push_back(entry.path().filename().string()); // 仅获取文件名
+            }
+        }
+    }
+
+    return bspFiles;
+}
 
 Gui::Gui(Renderer* app)
 {
@@ -170,6 +194,9 @@ void Gui::draw()
 	if (showMergeMapWidget)
 	{
 		drawMergeWindow();
+	}
+	if (showBspList) {
+		drawBspList();
 	}
 	if (showLimitsWidget)
 	{
@@ -1818,6 +1845,75 @@ void Gui::drawBspContexMenu()
 	}
 }
 
+// 定义 handleFile 函数
+void Gui::processFile(const std::filesystem::path& filePath)
+{
+	std::string pathlowercase = toLowerCase(filePath.string());
+	Bsp* map = app->getSelectedMap();
+	BspRenderer* rend = map ? map->getBspRender() : nullptr;
+
+	if (pathlowercase.ends_with(".wad"))
+	{
+		if (!map)
+		{
+			app->addMap(new Bsp(""));
+			app->selectMapId(0);
+			map = app->getSelectedMap();
+		}
+
+		if (map)
+		{
+			bool foundInMap = false;
+			for (auto& wad : rend->wads)
+			{
+				std::string tmppath = toLowerCase(wad->filename);
+				if (tmppath.find(basename(pathlowercase)) != std::string::npos)
+				{
+					foundInMap = true;
+					print_log(get_localized_string(LANG_0340));
+					break;
+				}
+			}
+
+			if (!foundInMap)
+			{
+				Wad* wad = new Wad(filePath.string());
+				if (wad->readInfo())
+				{
+					rend->wads.push_back(wad);
+					if (!map->ents[0]->keyvalues["wad"].ends_with(";"))
+						map->ents[0]->keyvalues["wad"] += ";";
+					map->ents[0]->keyvalues["wad"] += basename(filePath.string()) + ";";
+					map->update_ent_lump();
+					app->updateEnts();
+					app->reloading = true;
+					rend->reload();
+					app->reloading = false;
+				}
+				else
+					delete wad;
+			}
+		}
+	}
+	else if (pathlowercase.ends_with(".mdl") ||
+		pathlowercase.ends_with(".spr") ||
+		pathlowercase.ends_with(".csm"))
+	{
+		Bsp* tmpMap = new Bsp(filePath.string());
+		tmpMap->is_mdl_model = true;
+		app->addMap(tmpMap);
+		app->selectMap(tmpMap);
+	}
+	else
+	{
+		Bsp* tmpMap = new Bsp(filePath.string());
+		app->addMap(tmpMap);
+		app->selectMap(tmpMap);
+	}
+
+	// 更新上次使用的目录
+	g_settings.lastdir = stripFileName(filePath.string());
+}
 void Gui::drawMenuBar()
 {
 	ImGuiContext& g = *GImGui;
@@ -1961,6 +2057,8 @@ void Gui::drawMenuBar()
 			}
 			ifd::FileDialog::Instance().Close();
 		}
+
+
 
 		if (ImGui::BeginMenu(get_localized_string(LANG_0478).c_str()))
 		{
@@ -4952,6 +5050,9 @@ void Gui::drawMenuBar()
 					pickCount++;
 					showLightmapEditorUpdate = true;
 				}
+				if (ImGui::MenuItem(get_localized_string(LANG_1185).c_str(), "", showBspList)) {
+					showBspList = !showBspList;
+				}
 				if (ImGui::MenuItem(get_localized_string(LANG_0600).c_str(), "", showMergeMapWidget))
 				{
 					showMergeMapWidget = !showMergeMapWidget;
@@ -4960,6 +5061,7 @@ void Gui::drawMenuBar()
 				{
 					showLogWidget = !showLogWidget;
 				}
+				
 			}
 			ImGui::EndMenu();
 		}
@@ -8277,7 +8379,7 @@ void Gui::drawSettings()
 				if (ImGui::Button(("...##resOpen" + std::to_string(i)).c_str()))
 				{
 					resSelected = i;
-					ifd::FileDialog::Instance().Open("resOpen", "Select fgd path", std::string(), false, g_settings.lastdir);
+					ifd::FileDialog::Instance().Open("resOpen", "Select res path", std::string(), false, g_settings.lastdir);
 				}
 
 				ImGui::SameLine();
@@ -8835,7 +8937,7 @@ void Gui::drawAbout()
 	{
 		ImGui::InputText(get_localized_string(LANG_0822).c_str(), &g_version_string, ImGuiInputTextFlags_ReadOnly);
 
-		static char author[] = "w00tguy(bspguy), karaulov(newbspguy),Lws(Utility tool:Lightmap change)";
+		static char author[] = "w00tguy(bspguy), karaulov(newbspguy),Lws(Utility tool:Lightmap change/Bsp List)";
 		ImGui::InputText(get_localized_string(LANG_0823).c_str(), author, strlen(author), ImGuiInputTextFlags_ReadOnly);
 		if (ImGui::IsItemHovered())
 		{
@@ -10380,6 +10482,64 @@ void ImportLightmap(BSPFACE32 face, int faceIdx, Bsp* map)
 	}
 }
 
+
+
+void Gui::drawBspList() {
+	if (!showBspList) {
+		return; // 如果窗口已关闭，直接返回
+	}
+
+	// 使用带有关闭按钮的 Begin
+	if (ImGui::Begin("BSP File List", &showBspList, ImGuiWindowFlags_None)) {
+		// 添加搜索框
+		ImGui::InputText("Search", &searchQuery);
+
+		// 将搜索字符串转换为小写
+		std::string lowerSearchQuery = toLower(searchQuery);
+
+		// 遍历所有 resPaths
+		for (size_t i = 0; i < g_settings.resPaths.size(); ++i) {
+			PathToggleStruct& resPath = g_settings.resPaths[i];
+
+			if (resPath.enabled) {
+				// 使用 CollapsingHeader 使目录内容可折叠
+				if (ImGui::CollapsingHeader(("Path: " + resPath.path).c_str())) {
+					// 获取 .bsp 文件列表
+					std::vector<std::string> bspFiles = getBspFiles(resPath.path);
+					std::vector<std::string> filteredBspFiles;
+
+					// 筛选符合搜索条件的 .bsp 文件名
+					for (const auto& file : bspFiles) {
+						std::string lowerFile = toLower(file);
+						if (lowerSearchQuery.empty() || lowerFile.find(lowerSearchQuery) != std::string::npos) {
+							filteredBspFiles.push_back(file);
+						}
+					}
+
+					// 显示符合搜索条件的 .bsp 文件
+					if (filteredBspFiles.empty()) {
+						ImGui::Text("No .bsp files found.");
+					}
+					else {
+						for (const auto& file : filteredBspFiles) {
+							// 使用 ImGui::Selectable() 绘制文件名，并检测双击事件
+							if (ImGui::Selectable(file.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+								// 检测是否是双击事件
+								if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && ImGui::GetIO().MouseClickedCount[0] == 2) {
+									// 文件被双击时调用处理函数
+									std::string fullPath = resPath.path + "/" + file;
+									processFile(fullPath); // 调用处理函数
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	ImGui::End();
+}
+
 void Gui::drawLightMapTool()
 {
 	static float colourPatch[3];
@@ -10658,10 +10818,10 @@ void Gui::drawLightMapTool()
 				ImGui::Separator();
 				ColorPicker3(imgui_io, colourPatch);
 				ImGui::SetNextItemWidth(100.f);
-				if (ImGui::Button(get_localized_string(LANG_0864).c_str(), ImVec2(120, 0)))
-				{
-					needPickColor = true;
-				}
+				//if (ImGui::Button(get_localized_string(LANG_0864).c_str(), ImVec2(120, 0)))
+				//{
+				//	needPickColor = true;
+				//}
 				ImGui::Separator();
 			}
 			ImGui::SetNextItemWidth(100.f);
