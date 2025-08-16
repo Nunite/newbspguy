@@ -4476,7 +4476,7 @@ void Gui::drawMenuBar()
 				ImGui::TextUnformatted("Recalculate lights using rad compiler. (From settings)");
 				ImGui::EndTooltip();
 			}
-			if (ImGui::MenuItem("PROTECT MAP!(WIP)", NULL, false, !map->is_protected && rend))
+			if (ImGui::MenuItem(get_localized_string(LANG_1181).c_str(), NULL, false, !map->is_protected && rend))
 			{
 				map->merge_all_verts(1.f);
 
@@ -4518,13 +4518,13 @@ void Gui::drawMenuBar()
 			if (ImGui::IsItemHovered() && g.HoveredIdTimer > g_tooltip_delay)
 			{
 				ImGui::BeginTooltip();
-				ImGui::TextUnformatted("Protect map against decompilers.");
+				ImGui::TextUnformatted(get_localized_string(LANG_1182).c_str());
 				ImGui::EndTooltip();
 			}
 
-			if (ImGui::BeginMenu("Additional tools"))
+			if (ImGui::BeginMenu(get_localized_string(LANG_1183).c_str()))
 			{
-				if (ImGui::BeginMenu("Delete OOB Data", !app->isLoading && app->getSelectedMap() && rend))
+				if (ImGui::BeginMenu(get_localized_string(LANG_1184).c_str(), !app->isLoading && app->getSelectedMap() && rend))
 				{
 
 					static const char* optionNames[10] = {
