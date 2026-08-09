@@ -49,8 +49,8 @@ bool fileExists(const std::string& fileName);
 
 bool copyFile(const std::string& from, const std::string& to);
 
-char* loadFile(const std::string& fileName, int& length);
-
+bool writeFile(const std::string& path, const std::vector<unsigned char>& buffer);
+bool readFile(const std::string& path, std::vector<unsigned char>& outBuffer);
 bool writeFile(const std::string& fileName, const char* data, int len);
 bool writeFile(const std::string& fileName, const std::string& data);
 
@@ -149,6 +149,8 @@ enum class FIXUPPATH_SLASH
 };
 void fixupPath(char* path, FIXUPPATH_SLASH startslash, FIXUPPATH_SLASH endslash);
 void fixupPath(std::string& path, FIXUPPATH_SLASH startslash, FIXUPPATH_SLASH endslash);
+bool ReadBMP_RGB(const std::string& fileName, unsigned char** pixels_rgb, int& width, int& height);
+bool ReadBMP_PAL(const std::string& fileName, unsigned char** pixels_indexes, int& width, int& height, COLOR3 palette[256]);
 void WriteBMP_RGB(const std::string& fileName, unsigned char* pixels_rgb, int width, int height);
 void WriteBMP_PAL(const std::string& fileName, unsigned char* pixels_indexes, int width, int height, COLOR3* pal);
 
@@ -241,8 +243,8 @@ public:
 	std::string getCommandlineString();
 	int executeAndWait(int sin, int sout, int serr);
 };
-
-void calculateTextureInfo(BSPTEXTUREINFO& texinfo, const std::vector<vec3>& vertices, const std::vector<vec2>& uvs);
+std::vector<double> solve_uv_matrix_svd(const std::vector<std::vector<double>>& matrix, const std::vector<double>& vector);
+bool calculateTextureInfo(BSPTEXTUREINFO& texinfo, const std::vector<vec3>& vertices, const std::vector<vec2>& uvs);
 void getTrueTexSize(int& width, int& height, int maxsize = 512);
 
 
@@ -292,6 +294,7 @@ unsigned char FixBounds(unsigned int i);
 unsigned char FixBounds(float i);
 unsigned char FixBounds(double i);
 
+
 std::vector<Entity*> load_ents(const std::string& entLump, const std::string& mapName);
 int GetEntsAdded(LumpState& oldLump, LumpState& newLump, const std::string& bsp_name);
 
@@ -299,3 +302,14 @@ int GetEntsAdded(LumpState& oldLump, LumpState& newLump, const std::string& bsp_
 
 void findDirsWithHasFileExtension(const fs::path& rootPath, const std::string& extension, std::vector<std::string>& dirList, bool relative = false);
 void findFilesWithExtension(const fs::path& rootPath, const std::string& extension, std::vector<std::string>& fileList, bool relative = false);
+
+void W_CleanupName(const char* in, char* out);
+int calcMipsSize(int w, int h);
+WADTEX create_wadtex(const char* name, COLOR3* data, int width, int height);
+COLOR3* ConvertWadTexToRGB(const WADTEX & wadTex, COLOR3* palette = NULL);
+COLOR3* ConvertMipTexToRGB(BSPMIPTEX* wadTex, COLOR3* palette = NULL);
+COLOR4* ConvertWadTexToRGBA(const WADTEX& wadTex, COLOR3* palette = NULL, int colors = 256);
+COLOR4* ConvertMipTexToRGBA(BSPMIPTEX* tex, COLOR3* palette = NULL, int colors = 256);
+
+COLOR3 GetMipTexAplhaColor(BSPMIPTEX* wadTex, COLOR3* palette = NULL, int colors = 256);
+COLOR3 GetWadTexAplhaColor(const WADTEX& wadTex, COLOR3* palette = NULL, int colors = 256);

@@ -1,4 +1,4 @@
-#include "lang.h"
+﻿#include "lang.h"
 #include "util.h"
 #include "Wad.h"
 #include "Settings.h"
@@ -45,20 +45,37 @@ bool fileExists(const std::string& fileName)
 	}
 }
 
-char* loadFile(const std::string& fileName, int& length)
+bool readFile(const std::string& path, std::vector<unsigned char>& outBuffer)
 {
-	if (!fileExists(fileName))
-		return NULL;
-	std::ifstream fin(fileName.c_str(), std::ios::binary);
-	long long begin = fin.tellg();
-	fin.seekg(0, std::ios::end);
-	unsigned int size = (unsigned int)((int)fin.tellg() - begin);
-	char* buffer = new char[size];
-	fin.seekg(0, std::ios::beg);
-	fin.read(buffer, size);
-	fin.close();
-	length = (int)size; // surely models will never exceed 2 GB
-	return buffer;
+	std::ifstream file(path, std::ios::binary | std::ios::ate);
+	if (!file.is_open())
+		return false;
+
+	std::streamsize size = file.tellg();
+	if (size <= 0 || size > INT_MAX)
+		return false;
+
+	outBuffer.resize(static_cast<size_t>(size));
+	file.seekg(0, std::ios::beg);
+
+	if (!file.read((char*)outBuffer.data(), size))
+	{
+		outBuffer.clear();
+		return false;
+	}
+
+	return true;
+}
+
+bool writeFile(const std::string& path, const std::vector<unsigned char>& buffer)
+{
+	std::ofstream file(path, std::ios::binary | std::ios::trunc);
+	if (!file.is_open() || buffer.empty())
+		return false;
+
+	file.write((char*)buffer.data(), buffer.size());
+	file.flush();
+	return true;
 }
 
 bool writeFile(const std::string& fileName, const char* data, int len)
@@ -1098,6 +1115,192 @@ void WriteBMP_PAL(const std::string& fileName, unsigned char* pixels_indexes, in
 	fclose(outputFile);
 }
 
+bool ReadBMP_RGB(const std::string& fileName, unsigned char** pixels_rgb, int& width, int& height)
+{
+	FILE* inputFile = NULL;
+	fopen_s(&inputFile, fileName.c_str(), "rb");
+	if (!inputFile)
+	{
+		print_log(PRINT_RED, "Failed to open BMP file: {}\n", fileName);
+		return false;
+	}
+
+	unsigned char header[54];
+	if (fread(header, 1, 54, inputFile) != 54)
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Invalid BMP header: {}\n", fileName);
+		return false;
+	}
+
+	if (header[0] != 'B' || header[1] != 'M')
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Not a BMP file: {}\n", fileName);
+		return false;
+	}
+
+	int dataOffset = *(int*)&(header[DATA_OFFSET_OFFSET]);
+	width = *(int*)&(header[WIDTH_OFFSET]);
+	height = *(int*)&(header[HEIGHT_OFFSET]);
+	short bitsPerPixel = *(short*)&(header[BITS_PER_PIXEL_OFFSET]);
+
+	if (bitsPerPixel != 24 && bitsPerPixel != 32)
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Unsupported BMP format ({} bpp): {}\n", bitsPerPixel, fileName);
+		return false;
+	}
+
+	int bytesPerPixel = bitsPerPixel / 8;
+	int rowSize = ((width * bytesPerPixel + 3) / 4) * 4;
+	int imageSize = rowSize * height;
+
+	std::vector<unsigned char> data(imageSize);
+
+	fseek(inputFile, dataOffset, SEEK_SET);
+
+	if (fread(data.data(), 1, imageSize, inputFile) != (size_t)imageSize)
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Failed to read BMP data: {}\n", fileName);
+		return false;
+	}
+
+	fclose(inputFile);
+
+	*pixels_rgb = new unsigned char[width * height * 3];
+
+	if (bitsPerPixel == 24)
+	{
+		// 24-bit BMP: BGR -> RGB
+		for (int y = 0; y < height; y++)
+		{
+			int srcRow = (height - 1 - y) * rowSize;
+			int dstRow = y * width * 3;
+
+			for (int x = 0; x < width; x++)
+			{
+				int srcPos = srcRow + x * 3;
+				int dstPos = dstRow + x * 3;
+
+				// BGR -> RGB
+				(*pixels_rgb)[dstPos] = data[srcPos + 2];     // R
+				(*pixels_rgb)[dstPos + 1] = data[srcPos + 1]; // G
+				(*pixels_rgb)[dstPos + 2] = data[srcPos];     // B
+			}
+		}
+	}
+	else if (bitsPerPixel == 32)
+	{
+		// 32-bit BMP: BGRA -> RGB
+		for (int y = 0; y < height; y++)
+		{
+			int srcRow = (height - 1 - y) * rowSize;
+			int dstRow = y * width * 3;
+
+			for (int x = 0; x < width; x++)
+			{
+				int srcPos = srcRow + x * 4;
+				int dstPos = dstRow + x * 3;
+
+				// BGRA -> RGB
+				(*pixels_rgb)[dstPos] = data[srcPos + 2];     // R
+				(*pixels_rgb)[dstPos + 1] = data[srcPos + 1]; // G
+				(*pixels_rgb)[dstPos + 2] = data[srcPos];     // B
+			}
+		}
+	}
+	else return false;
+
+	return true;
+}
+
+bool ReadBMP_PAL(const std::string& fileName, unsigned char** pixels_indexes, int& width, int& height, COLOR3 palette[256])
+{
+	FILE* inputFile = NULL;
+	fopen_s(&inputFile, fileName.c_str(), "rb");
+	if (!inputFile)
+	{
+		print_log(PRINT_RED, "Failed to open BMP file: {}\n", fileName);
+		return false;
+	}
+
+	unsigned char header[54];
+	if (fread(header, 1, 54, inputFile) != 54)
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Invalid BMP header: {}\n", fileName);
+		return false;
+	}
+
+	if (header[0] != 'B' || header[1] != 'M')
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Not a BMP file: {}\n", fileName);
+		return false;
+	}
+
+	int dataOffset = *(int*)&(header[DATA_OFFSET_OFFSET]);
+	width = *(int*)&(header[WIDTH_OFFSET]);
+	height = *(int*)&(header[HEIGHT_OFFSET]);
+	short bitsPerPixel = *(short*)&(header[BITS_PER_PIXEL_OFFSET]);
+
+	if (bitsPerPixel != 8)
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Not an 8-bit BMP ({} bpp): {}\n", bitsPerPixel, fileName);
+		return false;
+	}
+
+	int rowSize = ((width + 3) / 4) * 4; 
+	int imageSize = rowSize * height;
+
+	COLOR4 palette4[256];
+	fseek(inputFile, 54, SEEK_SET);
+	if (fread(palette4, sizeof(COLOR4), 256, inputFile) != 256)
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Failed to read BMP palette: {}\n", fileName);
+		return false;
+	}
+
+	for (int i = 0; i < 256; i++)
+	{
+		palette[i].r = palette4[i].r;
+		palette[i].g = palette4[i].g;
+		palette[i].b = palette4[i].b;
+	}
+
+	std::vector<unsigned char> data(imageSize);
+
+	fseek(inputFile, dataOffset, SEEK_SET);
+
+	if (fread(data.data(), 1, imageSize, inputFile) != (size_t)imageSize)
+	{
+		fclose(inputFile);
+		print_log(PRINT_RED, "Failed to read BMP data: {}\n", fileName);
+		return false;
+	}
+
+	fclose(inputFile);
+
+	*pixels_indexes = new unsigned char[width * height]; 
+
+	for (int y = 0; y < height; y++)
+	{
+		int srcRow = (height - 1 - y) * rowSize;
+		int dstRow = y * width;
+
+		for (int x = 0; x < width; x++)
+		{
+			(*pixels_indexes)[dstRow + x] = data[srcRow + x];
+		}
+	}
+
+	return true;
+}
+
 
 int ArrayXYtoId(int w, int x, int y)
 {
@@ -1922,86 +2125,63 @@ std::vector<cVert> scaleVerts(const std::vector<cVert>& vertices, float stretch_
 
 BSPPLANE getSeparatePlane(vec3 amin, vec3 amax, vec3 bmin, vec3 bmax, bool force)
 {
-	BSPPLANE separationPlane = BSPPLANE();
 
-	// separating plane points toward the other map (b)
-	if (bmin.x >= amax.x)
-	{
-		separationPlane.nType = PLANE_X;
-		separationPlane.vNormal = { 1, 0, 0 };
-		separationPlane.fDist = amax.x + (bmin.x - amax.x) * 0.5f;
-	}
-	else if (bmax.x <= amin.x)
-	{
-		separationPlane.nType = PLANE_X;
-		separationPlane.vNormal = { -1, 0, 0 };
-		separationPlane.fDist = bmax.x + (amin.x - bmax.x) * 0.5f;
-	}
-	else if (bmin.y >= amax.y)
-	{
-		separationPlane.nType = PLANE_Y;
-		separationPlane.vNormal = { 0, 1, 0 };
-		separationPlane.fDist = bmin.y;
-	}
-	else if (bmax.y <= amin.y)
-	{
-		separationPlane.nType = PLANE_Y;
-		separationPlane.vNormal = { 0, -1, 0 };
-		separationPlane.fDist = bmax.y;
-	}
-	else if (bmin.z >= amax.z)
-	{
-		separationPlane.nType = PLANE_Z;
-		separationPlane.vNormal = { 0, 0, 1 };
-		separationPlane.fDist = bmin.z;
-	}
-	else if (bmax.z <= amin.z)
-	{
-		separationPlane.nType = PLANE_Z;
-		separationPlane.vNormal = { 0, 0, -1 };
-		separationPlane.fDist = bmax.z;
-	}
-	else
-	{
-		if (force) // Tried generate valid, but overlapped plane
-		{
-			// Calculate the separation distances for each axis
-			float dx = std::max(amax.x - bmin.x, bmax.x - amin.x);
-			float dy = std::max(amax.y - bmin.y, bmax.y - amin.y);
-			float dz = std::max(amax.z - bmin.z, bmax.z - amin.z);
+	BSPPLANE separationPlane = {};
 
-			// Find the axis with the largest separation
-			if (dx > dy && dx > dz)
-			{
-				separationPlane.nType = PLANE_ANYX;
-				separationPlane.vNormal = { dx > 0 ? 1.0f : -1.0f, 0, 0 };
-				separationPlane.fDist = dx > 0 ? amax.x + (bmin.x - amax.x) * 0.5f : amin.x + (bmax.x - amin.x) * 0.5f;
-			}
-			else if (dy > dx && dy > dz)
-			{
-				separationPlane.nType = PLANE_ANYY;
-				separationPlane.vNormal = { 0, dy > 0 ? 1.0f : -1.0f, 0 };
-				separationPlane.fDist = dy > 0 ? amax.y + (bmin.y - amax.y) * 0.5f : amin.y + (bmax.y - amin.y) * 0.5f;
-			}
-			else
-			{
-				separationPlane.nType = PLANE_ANYZ;
-				separationPlane.vNormal = { 0, 0, dz > 0 ? 1.0f : -1.0f };
-				separationPlane.fDist = dz > 0 ? amax.z + (bmin.z - amax.z) * 0.5f : amin.z + (bmax.z - amin.z) * 0.5f;
-			}
-		}
-		else
-		{
-			separationPlane.nType = -1; // no simple separating axis
+	struct AxisTest {
+		int type;
+		vec3 normal;
+		float gap;
+		float dist;
+	};
 
-			print_log(PRINT_RED, get_localized_string(LANG_0239));
-			print_log(PRINT_RED, "({:6.2f}, {:6.2f}, {:6.2f})", amin.x, amin.y, amin.z);
-			print_log(PRINT_RED, " - ({:6.2f}, {:6.2f}, {:6.2f}) {}\n", amax.x, amax.y, amax.z, "MODEL1");
+	std::vector<AxisTest> candidates;
 
-			print_log(PRINT_RED, "({:6.2f}, {:6.2f}, {:6.2f})", bmin.x, bmin.y, bmin.z);
-			print_log(PRINT_RED, " - ({:6.2f}, {:6.2f}, {:6.2f}) {}\n", bmax.x, bmax.y, bmax.z, "MODEL2");
-		}
+	// X axis
+	if (bmin.x >= amax.x) {
+		float gap = bmin.x - amax.x;
+		candidates.push_back({ PLANE_X, {1, 0, 0}, gap, amax.x + gap * 0.5f });
 	}
+	else if (bmax.x <= amin.x) {
+		float gap = amin.x - bmax.x;
+		candidates.push_back({ PLANE_X, {-1, 0, 0}, gap, bmax.x + gap * 0.5f });
+	}
+
+	// Y axis
+	if (bmin.y >= amax.y) {
+		float gap = bmin.y - amax.y;
+		candidates.push_back({ PLANE_Y, {0, 1, 0}, gap, amax.y + gap * 0.5f });
+	}
+	else if (bmax.y <= amin.y) {
+		float gap = amin.y - bmax.y;
+		candidates.push_back({ PLANE_Y, {0, -1, 0}, gap, bmax.y + gap * 0.5f });
+	}
+
+	// Z axis
+	if (bmin.z >= amax.z) {
+		float gap = bmin.z - amax.z;
+		candidates.push_back({ PLANE_Z, {0, 0, 1}, gap, amax.z + gap * 0.5f });
+	}
+	else if (bmax.z <= amin.z) {
+		float gap = amin.z - bmax.z;
+		candidates.push_back({ PLANE_Z, {0, 0, -1}, gap, bmax.z + gap * 0.5f });
+	}
+
+	if (candidates.empty()) {
+		separationPlane.nType = -1; // No separating axis
+		return separationPlane;
+	}
+
+	// Choose the axis with the largest gap
+	const AxisTest* best = &candidates[0];
+	for (const AxisTest& test : candidates) {
+		if (test.gap > best->gap)
+			best = &test;
+	}
+
+	separationPlane.nType = best->type;
+	separationPlane.vNormal = best->normal;
+	separationPlane.fDist = best->dist;
 
 	return separationPlane;
 }
@@ -2097,24 +2277,170 @@ std::string getValueInQuotes(std::string s)
 	return s.substr(find1 + 1, (find2 - find1) - 1);
 }
 
-
-
 std::vector<cVert> removeDuplicateWireframeLines(const std::vector<cVert>& points) {
-	std::unordered_set<std::pair<vec3, vec3>, pairHash> uniqueLines;
+	if (points.size() < 2) return {};
+
+	const COLOR4 color = points[0].c;
+	const float EPS_SQ = EPSILON * EPSILON;
+
+	std::unordered_set<std::pair<vec3, vec3>, vec3PairHash> uniqueSet;
+	std::vector<std::pair<vec3, vec3>> segments;
+	uniqueSet.reserve(points.size() / 2);
+	segments.reserve(points.size() / 2);
+
+	for (size_t i = 0; i + 1 < points.size(); i += 2) {
+		const vec3& p1 = points[i].pos;
+		const vec3& p2 = points[i + 1].pos;
+
+		vec3 diff = p2 - p1;
+		if (diff.x * diff.x + diff.y * diff.y + diff.z * diff.z < EPS_SQ)
+			continue;
+
+		std::pair<vec3, vec3> segForSet = (p1 < p2)
+			? std::make_pair(p1, p2)
+			: std::make_pair(p2, p1);
+
+		if (uniqueSet.insert(segForSet).second) {
+			segments.push_back({ p1, p2 });
+		}
+	}
+
+	auto getCanonicalDirection = [](const vec3& dir) -> vec3 {
+		float len = dir.length();
+		if (len < 1e-6f) return { 0,0,0 };
+
+		vec3 norm = dir * (1.0f / len);
+		if (std::fabs(norm.x) > 1e-6f) {
+			if (norm.x < 0) norm = norm * -1.0f;
+		}
+		else if (std::fabs(norm.y) > 1e-6f) {
+			if (norm.y < 0) norm = norm * -1.0f;
+		}
+		else if (norm.z < 0) {
+			norm = norm * -1.0f;
+		}
+
+		constexpr float scale = 10000.0f;
+		return {
+			std::round(norm.x * scale) / scale,
+			std::round(norm.y * scale) / scale,
+			std::round(norm.z * scale) / scale
+		};
+		};
+
+	std::unordered_map<vec3, std::vector<std::pair<vec3, vec3>>, vec3Hash> dirGroups;
+
+	for (const auto& seg : segments) {
+		vec3 dir = seg.second - seg.first;
+		vec3 canonicalDir = getCanonicalDirection(dir);
+
+		if (canonicalDir.x == 0 && canonicalDir.y == 0 && canonicalDir.z == 0)
+			continue;
+
+		dirGroups[canonicalDir].push_back(seg);
+	}
+
+	std::vector<std::pair<vec3, vec3>> mergedSegments;
+
+	for (auto& [canonicalDir, segs] : dirGroups) {
+		struct LineInfo {
+			vec3 basePoint;
+			vec3 direction;
+			std::vector<std::pair<float, float>> intervals;
+		};
+
+		std::vector<LineInfo> lines;
+
+		for (const auto& seg : segs) {
+			vec3 A = seg.first;
+			vec3 B = seg.second;
+			vec3 dir = B - A;
+			float lenSq = dir.lengthSquared();
+
+			if (lenSq < EPS_SQ) continue;
+
+			vec3 dirNorm = dir * (1.0f / std::sqrt(lenSq));
+
+			bool found = false;
+			for (auto& line : lines) {
+				vec3 toA = A - line.basePoint;
+				vec3 toB = B - line.basePoint;
+
+				vec3 crossA = line.direction.cross(toA);
+				vec3 crossB = line.direction.cross(toB);
+
+				if (crossA.lengthSquared() < EPS_SQ && crossB.lengthSquared() < EPS_SQ) {
+					float tA = toA.dot(line.direction);
+					float tB = toB.dot(line.direction);
+
+					line.intervals.emplace_back(std::min(tA, tB), std::max(tA, tB));
+					found = true;
+					break;
+				}
+			}
+
+			if (!found) {
+				LineInfo newLine;
+				newLine.basePoint = A;
+				newLine.direction = dirNorm;
+				newLine.intervals.emplace_back(0.0f, std::sqrt(lenSq));
+				lines.push_back(newLine);
+			}
+		}
+
+		for (auto& line : lines) {
+			if (line.intervals.empty()) continue;
+			std::sort(line.intervals.begin(), line.intervals.end());
+
+			float curStart = line.intervals[0].first;
+			float curEnd = line.intervals[0].second;
+
+			for (size_t i = 1; i < line.intervals.size(); ++i) {
+				if (line.intervals[i].first <= curEnd + EPSILON) {
+					curEnd = std::max(curEnd, line.intervals[i].second);
+				}
+				else {
+					if (curEnd - curStart > EPSILON) {
+						mergedSegments.emplace_back(
+							line.basePoint + line.direction * curStart,
+							line.basePoint + line.direction * curEnd
+						);
+					}
+					curStart = line.intervals[i].first;
+					curEnd = line.intervals[i].second;
+				}
+			}
+
+			if (curEnd - curStart > EPSILON) {
+				mergedSegments.emplace_back(
+					line.basePoint + line.direction * curStart,
+					line.basePoint + line.direction * curEnd
+				);
+			}
+		}
+	}
+
+	std::unordered_set<std::pair<vec3, vec3>, vec3PairHash> finalCheck;
 	std::vector<cVert> result;
+	result.reserve(mergedSegments.size() * 2);
 
-	for (size_t i = 0; i < points.size(); i += 2) {
-		cVert start = points[i];
-		cVert end = points[i + 1];
+	for (const auto& seg : mergedSegments) {
+		std::pair<vec3, vec3> normSeg = (seg.first < seg.second)
+			? std::make_pair(seg.first, seg.second)
+			: std::make_pair(seg.second, seg.first);
 
-		std::pair<vec3, vec3> line1(start.pos, end.pos);
-		std::pair<vec3, vec3> line2(end.pos, start.pos);
+		if (finalCheck.insert(normSeg).second) {
+			vec3 diff = seg.second - seg.first;
+			if (diff.lengthSquared() < EPS_SQ)
+				continue;
 
-		if (uniqueLines.count(line1) == 0 && uniqueLines.count(line2) == 0) {
-			uniqueLines.insert(line1);
-			uniqueLines.insert(line2);
-			result.push_back(start);
-			result.push_back(end);
+			cVert v0, v1;
+			v0.pos = seg.first;
+			v1.pos = seg.second;
+			v0.c = v1.c = color;
+
+			result.push_back(v0);
+			result.push_back(v1);
 		}
 	}
 
@@ -2184,7 +2510,6 @@ void removeColinearPoints(std::vector<vec3>& verts, float epsilon) {
 	}
 }
 
-
 bool checkCollision(const vec3& obj1Mins, const vec3& obj1Maxs, const vec3& obj2Mins, const vec3& obj2Maxs) {
 	// Check for overlap in x dimension
 	if (obj1Maxs.x < obj2Mins.x || obj1Mins.x > obj2Maxs.x) {
@@ -2220,6 +2545,7 @@ std::string Process::quoteIfNecessary(std::string toQuote)
 
 Process::Process(std::string program) : _program(program), _arguments()
 {
+
 }
 
 Process& Process::arg(const std::string& arg)
@@ -2345,10 +2671,10 @@ int Process::executeAndWait(int sin, int sout, int serr)
 
 
 
-std::vector<float> solve_uv_matrix_svd(const std::vector<std::vector<float>>& matrix, const std::vector<float>& vector)
+std::vector<double> solve_uv_matrix_svd(const std::vector<std::vector<double>>& matrix, const std::vector<double>& vector)
 {
 	// Construct the augmented matrix
-	std::vector<std::vector<float>> augmentedMatrix(3, std::vector<float>(5));
+	std::vector<std::vector<double>> augmentedMatrix(3, std::vector<double>(5));
 	for (int i = 0; i < 3; ++i) {
 		for (int j = 0; j < 4; ++j) {
 			augmentedMatrix[i][j] = matrix[i][j];
@@ -2360,7 +2686,7 @@ std::vector<float> solve_uv_matrix_svd(const std::vector<std::vector<float>>& ma
 	for (int i = 0; i < 3; ++i) {
 		// Find the row with the largest pivot element
 		int maxRow = i;
-		float maxPivot = std::fabs(augmentedMatrix[i][i]);
+		double maxPivot = std::fabs(augmentedMatrix[i][i]);
 		for (int j = i + 1; j < 3; ++j) {
 			if (std::fabs(augmentedMatrix[j][i]) > maxPivot) {
 				maxRow = j;
@@ -2375,7 +2701,7 @@ std::vector<float> solve_uv_matrix_svd(const std::vector<std::vector<float>>& ma
 
 		// Perform row operations to eliminate the lower triangular elements
 		for (int j = i + 1; j < 3; ++j) {
-			float factor = augmentedMatrix[j][i] / augmentedMatrix[i][i];
+			double factor = augmentedMatrix[j][i] / augmentedMatrix[i][i];
 			for (int k = i; k < 5; ++k) {
 				augmentedMatrix[j][k] -= factor * augmentedMatrix[i][k];
 			}
@@ -2383,9 +2709,9 @@ std::vector<float> solve_uv_matrix_svd(const std::vector<std::vector<float>>& ma
 	}
 
 	// Perform back substitution to solve for the solution vector
-	std::vector<float> solution(4);
+	std::vector<double> solution(4);
 	for (int i = 2; i >= 0; --i) {
-		float sum = augmentedMatrix[i][4];
+		double sum = augmentedMatrix[i][4];
 		for (int j = i + 1; j < 3; ++j) {
 			sum -= augmentedMatrix[i][j] * solution[j];
 		}
@@ -2395,42 +2721,43 @@ std::vector<float> solve_uv_matrix_svd(const std::vector<std::vector<float>>& ma
 	return solution;
 }
 
-void calculateTextureInfo(BSPTEXTUREINFO& texinfo, const std::vector<vec3>& vertices, const std::vector<vec2>& uvs)
+bool calculateTextureInfo(BSPTEXTUREINFO& texinfo, const std::vector<vec3>& vertices, const std::vector<vec2>& uvs)
 {
 	// Check if the number of vertices and UVs is valid
 	if (vertices.size() != 3 || uvs.size() != 3) {
-		throw std::invalid_argument("Exactly 3 vertices and 3 UVs are required");
+		return false;
 	}
 
 	// Construct the vertices matrix with 3 rows, 4 columns
-	std::vector<std::vector<float>> verticesMat(3, std::vector<float>(4));
+	std::vector<std::vector<double>> verticesMat(3, std::vector<double>(4));
 	for (int i = 0; i < 3; ++i) {
 		verticesMat[i][0] = vertices[i].x;
 		verticesMat[i][1] = vertices[i].y;
 		verticesMat[i][2] = vertices[i].z;
-		verticesMat[i][3] = 1.0f;
+		verticesMat[i][3] = 1.0;
 	}
 
 	// Split the UV coordinates
-	std::vector<float> uvsU(3);
-	std::vector<float> uvsV(3);
+	std::vector<double> uvsU(3);
+	std::vector<double> uvsV(3);
 	for (int i = 0; i < 3; ++i) {
 		uvsU[i] = uvs[i].x;
 		uvsV[i] = uvs[i].y;
 	}
 
-	std::vector<float> solU = solve_uv_matrix_svd(verticesMat, uvsU);
+	std::vector<double> solU = solve_uv_matrix_svd(verticesMat, uvsU);
 	vec3 vS(solU[0], solU[1], solU[2]); // Extract vS vector
-	float shiftS = solU[3]; // Extract shiftS value
+	double shiftS = solU[3]; // Extract shiftS value
 
-	std::vector<float> solV = solve_uv_matrix_svd(verticesMat, uvsV);
+	std::vector<double> solV = solve_uv_matrix_svd(verticesMat, uvsV);
 	vec3 vT(solV[0], solV[1], solV[2]); // Extract vT vector
-	float shiftT = solV[3]; // Extract shiftT value
+	double shiftT = solV[3]; // Extract shiftT value
 
 	texinfo.vS = vS;
 	texinfo.vT = vT;
-	texinfo.shiftS = shiftS;
-	texinfo.shiftT = shiftT;
+	texinfo.shiftS = (float)shiftS;
+	texinfo.shiftT = (float)shiftT;
+	return true;
 }
 
 void getTrueTexSize(int& width, int& height, int maxsize)
@@ -2964,7 +3291,8 @@ std::vector<Entity*> load_ents(const std::string& entLump, const std::string& ma
 				continue;
 			}
 			lastBracket = 0;
-			delete ent;
+			if (ent)
+				delete ent;
 			ent = new Entity();
 
 			if (line.find('}') == std::string::npos &&
@@ -3075,12 +3403,12 @@ int GetEntsAdded(LumpState& oldLump, LumpState& newLump, const std::string& bsp_
 }
 
 
-void findFilesWithExtension(const fs::path& rootPath, const std::string& extension, std::vector<std::string>& fileList, bool relative) 
+void findFilesWithExtension(const fs::path& rootPath, const std::string& extension, std::vector<std::string>& fileList, bool relative)
 {
 	std::error_code err{};
-	for (const auto& entry : fs::recursive_directory_iterator(rootPath,err)) 
+	for (const auto& entry : fs::recursive_directory_iterator(rootPath, err))
 	{
-		if (entry.is_regular_file() && entry.path().extension() == extension) 
+		if (entry.is_regular_file() && entry.path().extension() == extension)
 		{
 			fileList.push_back(relative ? fs::relative(entry.path(), rootPath).string() : entry.path().string());
 		}
@@ -3090,18 +3418,330 @@ void findFilesWithExtension(const fs::path& rootPath, const std::string& extensi
 void findDirsWithHasFileExtension(const fs::path& rootPath, const std::string& extension, std::vector<std::string>& dirList, bool relative)
 {
 	std::error_code err{};
-	for (const auto& entry : fs::recursive_directory_iterator(rootPath,err)) 
+	for (const auto& entry : fs::recursive_directory_iterator(rootPath, err))
 	{
-		if (entry.is_directory()) 
+		if (entry.is_directory())
 		{
-			for (const auto& subEntry : fs::directory_iterator(entry,err)) 
+			for (const auto& subEntry : fs::directory_iterator(entry, err))
 			{
 				if (subEntry.is_regular_file() && subEntry.path().extension() == extension)
 				{
 					dirList.push_back(relative ? fs::relative(entry.path(), rootPath).string() : entry.path().string());
-					break; 
+					break;
 				}
 			}
 		}
 	}
+}
+
+
+
+void W_CleanupName(const char* in, char* out)
+{
+	int	i;
+
+	for (i = 0; i < MAXTEXTURENAME; i++) {
+		char		c;
+		c = in[i];
+		if (!c)
+			break;
+
+		if (c >= 'A' && c <= 'Z')
+			c += ('a' - 'A');
+		out[i] = c;
+	}
+
+	for (; i < MAXTEXTURENAME; i++)
+		out[i] = 0;
+}
+
+WADTEX create_wadtex(const char* name, COLOR3* rgbdata, int width, int height)
+{
+	if (!name)
+		return NULL;
+	COLOR3 palette[256];
+	memset(&palette, 0, sizeof(COLOR3) * 256);
+	unsigned char* mip[MIPLEVELS] = { NULL };
+
+	COLOR3* src = rgbdata;
+	int colorCount = 0;
+
+	// create pallete and full-rez mipmap
+	mip[0] = new unsigned char[width * height];
+
+	bool do_magic = false;
+	if (name[0] == '{')
+	{
+		int sz = width * height;
+		for (int i = 0; i < sz; i++)
+		{
+			if (rgbdata[i] == COLOR3(0, 0, 255))
+			{
+				do_magic = true;
+				break;
+			}
+		}
+		if (do_magic)
+		{
+			colorCount++;
+			palette[0] = COLOR3(0, 0, 255);
+		}
+	}
+
+	for (int y = 0; y < height; y++)
+	{
+		for (int x = 0; x < width; x++)
+		{
+			int paletteIdx = -1;
+			for (int k = 0; k < colorCount; k++)
+			{
+				if (*src == palette[k])
+				{
+					paletteIdx = k;
+					break;
+				}
+			}
+			if (paletteIdx == -1)
+			{
+				if (colorCount >= 256)
+				{
+					print_log(get_localized_string(LANG_1044));
+					delete[] mip[0];
+					return NULL;
+				}
+				palette[colorCount] = *src;
+				paletteIdx = colorCount;
+				colorCount++;
+			}
+
+			if (do_magic)
+			{
+				if (paletteIdx == 0)
+				{
+					mip[0][y * width + x] = (unsigned char)255;
+				}
+				else if (paletteIdx == 255)
+				{
+					mip[0][y * width + x] = (unsigned char)0;
+				}
+				else
+				{
+					mip[0][y * width + x] = (unsigned char)paletteIdx;
+				}
+			}
+			else
+			{
+				mip[0][y * width + x] = (unsigned char)paletteIdx;
+			}
+			src++;
+		}
+	}
+
+	if (do_magic)
+	{
+		std::swap(palette[0], palette[255]);
+	}
+
+	int texDataSize = width * height + sizeof(short) /* pal num*/ + sizeof(COLOR3) * 256;
+
+	// generate mipmaps
+	for (int i = 1; i < MIPLEVELS; i++)
+	{
+		int div = 1 << i;
+		int mipWidth = width / div;
+		int mipHeight = height / div;
+		texDataSize += mipWidth * mipHeight;
+		mip[i] = new unsigned char[texDataSize];
+
+		src = rgbdata;
+		for (int y = 0; y < mipHeight; y++)
+		{
+			for (int x = 0; x < mipWidth; x++)
+			{
+				int paletteIdx = -1;
+				for (int k = 0; k < colorCount; k++)
+				{
+					if (*src == palette[k])
+					{
+						paletteIdx = k;
+						break;
+					}
+				}
+
+				mip[i][y * mipWidth + x] = (unsigned char)paletteIdx;
+				src += div;
+			}
+		}
+	}
+
+	int newTexLumpSize = sizeof(BSPMIPTEX) + texDataSize;
+
+	newTexLumpSize = ((newTexLumpSize + 3) & ~3);
+
+	WADTEX newMipTex;
+	newMipTex.data.resize(newTexLumpSize);
+	unsigned char* newTexData = newMipTex.data.data();
+
+	newMipTex.nWidth = width;
+	newMipTex.nHeight = height;
+
+	memcpy(newMipTex.szName, name, MAXTEXTURENAME);
+
+	newMipTex.nOffsets[0] = 0;
+	newMipTex.nOffsets[1] = newMipTex.nOffsets[0] + width * height;
+	newMipTex.nOffsets[2] = newMipTex.nOffsets[1] + (width >> 1) * (height >> 1);
+	newMipTex.nOffsets[3] = newMipTex.nOffsets[2] + (width >> 2) * (height >> 2);
+
+	unsigned char* palleteOffset = newTexData + newMipTex.nOffsets[3] + (width >> 3) * (height >> 3);
+	memcpy(newTexData + newMipTex.nOffsets[0], mip[0], width * height);
+	memcpy(newTexData + newMipTex.nOffsets[1], mip[1], (width >> 1) * (height >> 1));
+	memcpy(newTexData + newMipTex.nOffsets[2], mip[2], (width >> 2) * (height >> 2));
+	memcpy(newTexData + newMipTex.nOffsets[3], mip[3], (width >> 3) * (height >> 3));
+	memcpy(palleteOffset, palette, sizeof(COLOR3) * 256);
+
+	*(unsigned short*)palleteOffset = 256;
+	memcpy(palleteOffset + 2, palette, sizeof(COLOR3) * 256);
+
+	return newMipTex;
+}
+
+COLOR3* ConvertWadTexToRGB(const WADTEX& wadTex, COLOR3* palette)
+{
+	if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0257), wadTex.szName, wadTex.nWidth, wadTex.nHeight);
+	int lastMipSize = (wadTex.nWidth >> 3) * (wadTex.nHeight >> 3);
+	const unsigned char* src = wadTex.data.data();
+
+	if (palette == NULL)
+		palette = (COLOR3*)(src + wadTex.nOffsets[3] + lastMipSize + sizeof(short) - sizeof(BSPMIPTEX));
+	
+
+	int sz = wadTex.nWidth * wadTex.nHeight;
+	COLOR3* imageData = new COLOR3[sz];
+
+
+	for (int k = 0; k < sz; k++)
+	{
+		imageData[k] = palette[src[k]];
+	}
+
+	if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0258), wadTex.szName, wadTex.nWidth, wadTex.nHeight);
+	return imageData;
+}
+
+COLOR3* ConvertMipTexToRGB(BSPMIPTEX* tex, COLOR3* palette)
+{
+	/*if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0259), tex->szName, tex->nWidth, tex->nHeight);*/
+	int lastMipSize = (tex->nWidth >> 3) * (tex->nHeight >> 3);
+
+	if (palette == NULL)
+		palette = (COLOR3*)(((unsigned char*)tex) + tex->nOffsets[3] + lastMipSize + 2);
+	unsigned char* src = (unsigned char*)(((unsigned char*)tex) + tex->nOffsets[0]);
+
+	int sz = tex->nWidth * tex->nHeight;
+	COLOR3* imageData = new COLOR3[sz];
+
+	for (int k = 0; k < sz; k++)
+	{
+		imageData[k] = palette[src[k]];
+	}
+
+	/*if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0260), tex->szName, tex->nWidth, tex->nHeight);*/
+	return imageData;
+}
+
+
+COLOR4* ConvertWadTexToRGBA(const WADTEX& wadTex, COLOR3* palette, int colors)
+{
+	if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0261), wadTex.szName, wadTex.nWidth, wadTex.nHeight);
+	int lastMipSize = (wadTex.nWidth >> 3) * (wadTex.nHeight >> 3);
+	const unsigned char* src = wadTex.data.data();
+
+	if (palette == NULL)
+		palette = (COLOR3*)(src + wadTex.nOffsets[3] + lastMipSize + sizeof(short) - sizeof(BSPMIPTEX));
+
+
+	int sz = wadTex.nWidth * wadTex.nHeight;
+	COLOR4* imageData = new COLOR4[sz];
+
+	for (int k = 0; k < sz; k++)
+	{
+		if (wadTex.szName[0] == '{' && (colors - 1 == src[k] || palette[src[k]] == COLOR3(0, 0, 255)))
+		{
+			imageData[k] = COLOR4(255, 255, 255, 0);
+		}
+		else
+		{
+			imageData[k] = palette[src[k]];
+		}
+	}
+
+	if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0262), wadTex.szName, wadTex.nWidth, wadTex.nHeight);
+	return imageData;
+}
+
+COLOR4* ConvertMipTexToRGBA(BSPMIPTEX* tex, COLOR3* palette, int colors)
+{
+	/*if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0263), tex->szName, tex->nWidth, tex->nHeight);*/
+	int lastMipSize = (tex->nWidth >> 3) * (tex->nHeight >> 3);
+
+	if (palette == NULL)
+		palette = (COLOR3*)(((unsigned char*)tex) + tex->nOffsets[3] + lastMipSize + 2);
+	unsigned char* src = (unsigned char*)(((unsigned char*)tex) + tex->nOffsets[0]);
+
+	int sz = tex->nWidth * tex->nHeight;
+	COLOR4* imageData = new COLOR4[sz];
+
+	for (int k = 0; k < sz; k++)
+	{
+		if (tex->szName[0] == '{' && (colors - 1 == src[k] || palette[src[k]] == COLOR3(0, 0, 255)))
+		{
+			imageData[k] = COLOR4(0, 0, 0, 0);
+		}
+		else
+		{
+			imageData[k] = palette[src[k]];
+		}
+	}
+
+	/*if (g_settings.verboseLogs)
+		print_log(get_localized_string(LANG_0264), tex->szName, tex->nWidth, tex->nHeight);*/
+	return imageData;
+}
+
+COLOR3 GetMipTexAplhaColor(BSPMIPTEX* tex, COLOR3* palette, int max_colors)
+{
+	int lastMipSize = (tex->nWidth >> 3) * (tex->nHeight >> 3);
+	if (palette == NULL)
+	{
+		max_colors = *(unsigned short*)(((unsigned char*)tex) + tex->nOffsets[3] + lastMipSize);
+		palette = (COLOR3*)(((unsigned char*)tex) + tex->nOffsets[3] + lastMipSize + 2);
+	}
+	if (max_colors > 256 || max_colors < 0)
+	{
+		max_colors = 256;
+	}
+	return palette[max_colors - 1];
+}
+
+COLOR3 GetWadTexAplhaColor(const WADTEX& wadTex, COLOR3* palette, int max_colors)
+{
+	const unsigned char* src = wadTex.data.data();
+	int lastMipSize = (wadTex.nWidth >> 3) * (wadTex.nHeight >> 3);
+	if (palette == NULL)
+	{
+		max_colors = *(unsigned short*)(src + wadTex.nOffsets[3] + lastMipSize - sizeof(BSPMIPTEX));
+		palette = (COLOR3*)(src + wadTex.nOffsets[3] + lastMipSize + sizeof(short) - sizeof(BSPMIPTEX));
+	}
+	if (max_colors > 256 || max_colors < 0)
+	{
+		max_colors = 256;
+	}
+	return palette[max_colors - 1];
 }

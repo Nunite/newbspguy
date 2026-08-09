@@ -370,6 +370,9 @@ Renderer::Renderer()
 	hoverAxis = -1;
 	saveTranformResult = false;
 	deltaMoveOffset = vec3();
+
+	matmodel = matview = projection = modelView = modelViewProjection = mat4x4();
+	matupdate_Num = -1;
 }
 
 Renderer::~Renderer()
@@ -414,12 +417,12 @@ void Renderer::renderLoop()
 
 	{
 		line_verts = new cVert[2];
-		lineBuf = new VertexBuffer(colorShader, line_verts, 2, GL_LINES);
+		lineBuf = new VertexBuffer(colorShader, line_verts, 2, GL_LINES, true);
 	}
 
 	{
 		plane_verts = new cQuad(cVert(), cVert(), cVert(), cVert());
-		planeBuf = new VertexBuffer(colorShader, plane_verts, 6, GL_TRIANGLES);
+		planeBuf = new VertexBuffer(colorShader, plane_verts, 6, GL_TRIANGLES, true);
 	}
 
 	{
@@ -433,7 +436,7 @@ void Renderer::renderLoop()
 		moveAxes.hoverColor[2] = { 64, 255, 64, 255 };
 		moveAxes.hoverColor[3] = { 255, 255, 255, 255 };
 		// flipped for HL coords
-		moveAxes.buffer = new VertexBuffer(colorShader, &moveAxes.model, 6 * 6 * 4, GL_TRIANGLES);
+		moveAxes.buffer = new VertexBuffer(colorShader, &moveAxes.model, 6 * 6 * 4, GL_TRIANGLES, false);
 		moveAxes.numAxes = 4;
 	}
 
@@ -454,7 +457,7 @@ void Renderer::renderLoop()
 		scaleAxes.hoverColor[4] = { 64, 64, 255, 255 };
 		scaleAxes.hoverColor[5] = { 64, 255, 64, 255 };
 		// flipped for HL coords
-		scaleAxes.buffer = new VertexBuffer(colorShader, &scaleAxes.model, 6 * 6 * 6, GL_TRIANGLES);
+		scaleAxes.buffer = new VertexBuffer(colorShader, &scaleAxes.model, 6 * 6 * 6, GL_TRIANGLES, false);
 		scaleAxes.numAxes = 6;
 	}
 
@@ -572,6 +575,10 @@ void Renderer::renderLoop()
 
 				glGenTextures(1, &texture);
 				glBindTexture(GL_TEXTURE_2D, texture);
+				glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#ifdef GL_UNPACK_ROW_LENGTH 
+				glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+#endif
 				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ortho_tga_w, ortho_tga_h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -762,6 +769,13 @@ void Renderer::renderLoop()
 				}
 			}
 
+			// Disable smoothing during overview capture to prevent wireframe artifacts
+			if (ortho_save_tga || ortho_save_bmp || (make_screenshot && !isLoading))
+			{
+				glDisable(GL_LINE_SMOOTH);
+				glDisable(GL_POLYGON_SMOOTH);
+				glDisable(GL_POINT_SMOOTH);
+			}
 
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -891,8 +905,7 @@ void Renderer::renderLoop()
 				if (SelectedMap->is_mdl_model && SelectedMap->map_mdl)
 				{
 					matmodel.loadIdentity();
-					modelShader->bind();
-					modelShader->updateMatrixes();
+					mat_upload();
 					if (anyCtrlPressed && !ortho_overview && !make_screenshot)
 					{
 						if (SelectedMap->map_mdl->mdl_cube && SelectedMap->map_mdl->mdl_cube->axesBuffer)
@@ -914,8 +927,6 @@ void Renderer::renderLoop()
 				if (SelectedMap->is_mdl_model && SelectedMap->map_spr)
 				{
 					matmodel.loadIdentity();
-					modelShader->bind();
-					modelShader->updateMatrixes();
 					if (anyCtrlPressed)
 					{
 						SelectedMap->map_spr->DrawAxes();
@@ -931,8 +942,6 @@ void Renderer::renderLoop()
 				if (SelectedMap->is_mdl_model && SelectedMap->map_csm)
 				{
 					matmodel.loadIdentity();
-					modelShader->bind();
-					modelShader->updateMatrixes();
 					SelectedMap->map_csm->draw();
 					continue;
 				}
@@ -989,7 +998,7 @@ void Renderer::renderLoop()
 					matmodel.loadIdentity();
 					vec3 offset = (SelectedMap->getBspRender()->mapOffset + (entIdx.size() ? SelectedMap->ents[entIdx[0]]->origin : vec3())).flip();
 					matmodel.translate(offset.x, offset.y, offset.z);
-					colorShader->updateMatrixes();
+					mat_upload();
 					BSPMODEL& pickModel = SelectedMap->models[modelIdx];
 					int currentPlane = 0;
 					glDisable(GL_CULL_FACE);
@@ -1003,7 +1012,7 @@ void Renderer::renderLoop()
 					matmodel.loadIdentity();
 					vec3 offset = (SelectedMap->getBspRender()->mapOffset + (entIdx.size() > 0 ? SelectedMap->ents[entIdx[0]]->origin : vec3())).flip();
 					matmodel.translate(offset.x, offset.y, offset.z);
-					colorShader->updateMatrixes();
+					mat_upload();
 					BSPMODEL& pickModel = SelectedMap->models[modelIdx];
 					int currentPlane = 0;
 					glDisable(GL_CULL_FACE);
@@ -1017,8 +1026,8 @@ void Renderer::renderLoop()
 					if (g_render_flags & RENDER_ORIGIN)
 					{
 						matmodel.loadIdentity();
+						mat_upload();
 						vec3 offset = SelectedMap->getBspRender()->mapOffset;
-						colorShader->updateMatrixes();
 						vec3 p1 = offset + vec3(-10240.0f, 0.0f, 0.0f);
 						vec3 p2 = offset + vec3(10240.0f, 0.0f, 0.0f);
 						drawLine(p1, p2, { 128, 128, 255, 255 });
@@ -1048,7 +1057,7 @@ void Renderer::renderLoop()
 			if (entConnectionPoints && (g_render_flags & RENDER_ENT_CONNECTIONS) && !ortho_overview && !make_screenshot)
 			{
 				matmodel.loadIdentity();
-				colorShader->updateMatrixes();
+				mat_upload();
 				entConnectionPoints->drawFull();
 			}
 
@@ -1088,7 +1097,7 @@ void Renderer::renderLoop()
 			if (!ortho_overview && !make_screenshot)
 			{
 				matmodel.loadIdentity();
-				colorShader->updateMatrixes();
+				mat_upload();
 				GLfloat currentLineWidth;
 				glGetFloatv(GL_LINE_WIDTH, &currentLineWidth);
 				glDisable(GL_CULL_FACE);
@@ -1324,7 +1333,7 @@ void Renderer::renderLoop()
 					colorShader->pushMatrix(MAT_VIEW);
 					projection.ortho(0, windowWidth, windowHeight, 0, -1.0f, 1.0f);
 					view.loadIdentity();
-					colorShader->updateMatrixes();
+					mat_upload();
 
 					drawPolygon2D(debugPoly, vec2(800, 100), vec2(500, 500), COLOR4(255, 0, 0, 255));
 
@@ -1370,21 +1379,19 @@ void Renderer::renderLoop()
 
 						stbi_write_tga(screenPath.c_str(), ortho_tga_w, ortho_tga_h, 3, pixels.data());
 						print_log("Saved to {} file!\n", screenPath);
+						
+						make_screenshot--;
+						make_screenshot_target++;
+
+						if (make_screenshot <= 0)
+						{
+							is_closing = true;
+						}
 					}
 					else
 					{
 						stbi_write_tga((g_working_dir + (SelectedMap ? (SelectedMap->bsp_name + ".tga") : "overview.tga")).c_str(), ortho_tga_w, ortho_tga_h, 3, pixels.data());
 						print_log("Saved to {} file!\n", (g_working_dir + "overview.tga"));
-					}
-
-					make_screenshot--;
-					make_screenshot_target++;
-
-
-					if (make_screenshot <= 0)
-					{
-						if (!ortho_save_tga)
-							is_closing = true;
 					}
 				}
 				else
@@ -1443,6 +1450,14 @@ void Renderer::renderLoop()
 				glDeleteRenderbuffers(1, &rbo);
 				ortho_save_tga = false;
 				ortho_save_bmp = false;
+				ortho_overview = 0; // Reset overview mode
+				g_render_flags |= RENDER_WIREFRAME; // Re-enable wireframe after BMP save
+				
+				// Disable smoothing settings that were enabled for overview capture
+				glDisable(GL_LINE_SMOOTH);
+				glDisable(GL_POLYGON_SMOOTH);
+				glDisable(GL_POINT_SMOOTH);
+				glDisable(GL_MULTISAMPLE);
 			}
 
 			vec3 forward, right, up;
@@ -1765,9 +1780,9 @@ void Renderer::drawModelVerts()
 
 	matmodel.loadIdentity();
 	matmodel.translate(rend->renderOffset.x, rend->renderOffset.y, rend->renderOffset.z);
-	colorShader->updateMatrixes();
+	mat_upload();
 
-	modelVertBuff->uploaded = false;
+	modelVertBuff->reupload();
 	modelVertBuff->drawFull();
 }
 
@@ -1817,11 +1832,11 @@ void Renderer::drawModelOrigin(int modelIdx)
 	{
 		color = originHovered ? vertHoverColor : vertDimColor;
 	}
-	modelOriginCube = cCube(min, max, color);
+	modelOriginCube = new cCube[1]{ cCube(min, max, color) };
 
 	matmodel.loadIdentity();
-	colorShader->updateMatrixes();
-	modelOriginBuff->uploaded = false;
+	mat_upload();
+	modelOriginBuff->reupload();
 	modelOriginBuff->drawFull();
 }
 
@@ -1835,7 +1850,7 @@ void Renderer::drawTransformAxes()
 		updateDragAxes();
 		vec3 ori = scaleAxes.origin;
 		matmodel.translate(ori.x, ori.z, -ori.y);
-		colorShader->updateMatrixes();
+		mat_upload();
 		glDisable(GL_CULL_FACE);
 		scaleAxes.buffer->drawFull();
 		glEnable(GL_CULL_FACE);
@@ -1851,7 +1866,7 @@ void Renderer::drawTransformAxes()
 		updateDragAxes();
 		vec3 ori = moveAxes.origin;
 		matmodel.translate(ori.x, ori.z, -ori.y);
-		colorShader->updateMatrixes();
+		mat_upload();
 		glDisable(GL_CULL_FACE);
 		moveAxes.buffer->drawFull();
 		glEnable(GL_CULL_FACE);
@@ -1866,7 +1881,7 @@ void Renderer::drawEntConnections()
 	if (entConnections && (g_render_flags & RENDER_ENT_CONNECTIONS))
 	{
 		matmodel.loadIdentity();
-		colorShader->updateMatrixes();
+		mat_upload();
 		entConnections->drawFull();
 	}
 }
@@ -2218,8 +2233,11 @@ void Renderer::cameraRotationControls()
 	}
 	else
 	{
-		cameraIsRotating = false;
-		totalMouseDrag = vec2();
+		if (cameraIsRotating)
+		{
+			cameraIsRotating = false;
+			totalMouseDrag = vec2();
+		}
 	}
 }
 
@@ -2901,11 +2919,6 @@ bool Renderer::transformAxisControls()
 
 vec3 Renderer::getMoveDir()
 {
-	mat4x4 rotMat;
-	rotMat.loadIdentity();
-	rotMat.rotateX(HL_PI * cameraAngles.x / 180.0f);
-	rotMat.rotateZ(HL_PI * cameraAngles.z / 180.0f);
-
 	vec3 forward, right, up;
 	makeVectors(cameraAngles, forward, right, up);
 
@@ -3270,7 +3283,7 @@ void Renderer::drawLine(vec3& start, vec3& end, COLOR4 color)
 	line_verts[1].pos = end.flip();
 	line_verts[1].c = color;
 
-	lineBuf->uploaded = false;
+	lineBuf->reupload();
 	lineBuf->drawFull();
 }
 
@@ -3281,7 +3294,7 @@ void Renderer::drawLine2D(vec2 start, vec2 end, COLOR4 color) {
 	line_verts[1].pos = vec3(end.x, end.y, 0.0f).flip();
 	line_verts[1].c = color;
 
-	lineBuf->uploaded = false;
+	lineBuf->reupload();
 	lineBuf->drawFull();
 }
 
@@ -3290,7 +3303,7 @@ void Renderer::drawBox(vec3 center, float width, COLOR4 color) {
 	vec3 sz = vec3(width, width, width);
 	vec3 pos = vec3(center.x, center.z, -center.y);
 	cCube cube(pos - sz, pos + sz, color);
-	VertexBuffer buffer(g_app->colorShader, &cube, 6 * 6, GL_TRIANGLES);
+	VertexBuffer buffer(g_app->colorShader, &cube, 6 * 6, GL_TRIANGLES, false);
 	buffer.drawFull();
 }
 
@@ -3300,7 +3313,7 @@ void Renderer::drawBox(vec3 mins, vec3 maxs, COLOR4 color) {
 
 	cCube cube(mins, maxs, color);
 
-	VertexBuffer buffer(g_app->colorShader, &cube, 6 * 6, GL_TRIANGLES);
+	VertexBuffer buffer(g_app->colorShader, &cube, 6 * 6, GL_TRIANGLES, false);
 	buffer.drawFull();
 }
 
@@ -3313,7 +3326,7 @@ void Renderer::drawPolygon3D(Polygon3D& poly, COLOR4 color) {
 		verts[i].c = color;
 	}
 
-	VertexBuffer buffer(g_app->colorShader, verts, (int)poly.verts.size(), GL_TRIANGLE_FAN);
+	VertexBuffer buffer(g_app->colorShader, verts, (int)poly.verts.size(), GL_TRIANGLE_FAN, false);
 	buffer.drawFull();
 }
 
@@ -3346,7 +3359,7 @@ void Renderer::drawBox2D(vec2 center, float width, COLOR4 color) {
 	vec2 pos = vec2(center.x, center.y) - vec2(width * 0.5f, width * 0.5f);
 	cQuad cube(pos.x, pos.y, width, width, color);
 
-	VertexBuffer buffer(g_app->colorShader, &cube, 6, GL_TRIANGLES);
+	VertexBuffer buffer(g_app->colorShader, &cube, 6, GL_TRIANGLES, false);
 	buffer.drawFull();
 }
 
@@ -3376,7 +3389,7 @@ void Renderer::drawPlane(BSPPLANE& plane, COLOR4 color, vec3 offset)
 	plane_verts->v3 = topLeftVert;
 	plane_verts->v4 = topRightVert;
 
-	planeBuf->uploaded = false;
+	planeBuf->reupload();
 	planeBuf->drawFull();
 }
 
@@ -3619,7 +3632,7 @@ void Renderer::updateDragAxes()
 		}
 
 		scaleAxes.origin += mapOffset;
-		scaleAxes.buffer->uploaded = false;
+		scaleAxes.buffer->reupload();
 	}
 	else
 	{
@@ -3659,7 +3672,7 @@ void Renderer::updateDragAxes()
 		}
 
 		moveAxes.origin += mapOffset;
-		moveAxes.buffer->uploaded = false;
+		moveAxes.buffer->reupload();
 	}
 }
 
@@ -3711,6 +3724,11 @@ void Renderer::updateModelVerts()
 	Entity* ent = NULL;
 	auto entIdx = pickInfo.selectedEnts;
 
+	if (modelOriginBuff)
+	{
+		delete modelOriginBuff;
+		modelOriginBuff = NULL;
+	}
 
 	if (modelVertBuff)
 	{
@@ -3718,11 +3736,17 @@ void Renderer::updateModelVerts()
 		modelVertBuff = NULL;
 	}
 
-	if (modelVertCubes)
+	/*if (modelVertCubes)
 	{
 		delete[] modelVertCubes;
 		modelVertCubes = NULL;
 	}
+
+	if (modelOriginCube)
+	{
+		delete[] modelOriginCube;
+		modelOriginCube = NULL;
+	}*/
 
 	scaleTexinfos.clear();
 	modelEdges.clear();
@@ -3742,13 +3766,15 @@ void Renderer::updateModelVerts()
 
 	modelTransform = modelIdx;
 
+	modelOriginCube = new cCube[1];
+
 	if (!modelOriginBuff)
 	{
-		modelOriginBuff = new VertexBuffer(colorShader, &modelOriginCube, 6 * 6, GL_TRIANGLES);
+		modelOriginBuff = new VertexBuffer(colorShader, modelOriginCube, 6 * 6, GL_TRIANGLES, true);
 	}
 	else
 	{
-		modelOriginBuff->uploaded = false;
+		modelOriginBuff->reupload();
 	}
 
 	if (modelIdx < 0)
@@ -3794,7 +3820,7 @@ void Renderer::updateModelVerts()
 	}
 
 	modelVertCubes = new cCube[numCubes];
-	modelVertBuff = new VertexBuffer(colorShader, modelVertCubes, (6 * 6 * (int)numCubes), GL_TRIANGLES);
+	modelVertBuff = new VertexBuffer(colorShader, modelVertCubes, (6 * 6 * (int)numCubes), GL_TRIANGLES, true);
 	updateSelectionSize(map, modelIdx);
 
 	//print_log(get_localized_string(LANG_0913),modelVerts.size());
@@ -3946,10 +3972,8 @@ void Renderer::updateEntConnections()
 		}
 	}
 
-	entConnections = new VertexBuffer(colorShader, lines, (int)numVerts, GL_LINES);
-	entConnectionPoints = new VertexBuffer(colorShader, points, ((int)(numPoints) * 6 * 6), GL_TRIANGLES);
-	entConnections->ownData = true;
-	entConnectionPoints->ownData = true;
+	entConnections = new VertexBuffer(colorShader, lines, (int)numVerts, GL_LINES, true);
+	entConnectionPoints = new VertexBuffer(colorShader, points, ((int)(numPoints) * 6 * 6), GL_TRIANGLES, true);
 	updateCullBox();
 }
 
@@ -3961,12 +3985,12 @@ void Renderer::updateEntConnectionPositions()
 		Entity* ent = SelectedMap->ents[entIdx[0]];
 		vec3 pos = SelectedMap->getEntOrigin(ent).flip();
 
-		cVert* verts = (cVert*)entConnections->get_data();
+		cVert* verts = (cVert*)entConnections->getData();
 		for (int i = 0; i < entConnections->numVerts; i += 2)
 		{
 			verts[i].pos = pos;
 		}
-		entConnections->uploaded = false;
+		entConnections->reupload();
 	}
 
 	updateCullBox();
@@ -4728,10 +4752,10 @@ void Renderer::pasteEnt(bool noModifyOrigin, bool copyModel)
 	}
 
 	if (copiedEnts.size())
-	rend->pushUndoState("Paste Entity", FL_ENTITIES);
+		rend->pushUndoState("Paste Entity", FL_ENTITIES);
 }
 
-void Renderer::pasteEntsFromText(std::string text) 
+void Renderer::pasteEntsFromText(std::string text)
 {
 	auto clipboardText = ImGui::GetClipboardText();
 	if (!clipboardText)
@@ -4774,7 +4798,7 @@ void Renderer::pasteEntsFromText(std::string text)
 		map->ents.push_back(copiedEnts[i]);
 		selectEnt(map, (int)map->ents.size() - 1, true);
 	}
-	
+
 
 	rend->pushUndoState("Paste Ents from clipboard", FL_ENTITIES);
 }
@@ -4783,32 +4807,52 @@ void Renderer::deleteEnts()
 {
 	Bsp* map = SelectedMap;
 
-	if (map && pickInfo.selectedEnts.size() > 0)
+	if (map && !pickInfo.selectedEnts.empty())
 	{
 		bool reloadbspmdls = false;
-		auto tmpEnts = pickInfo.selectedEnts;
-		std::sort(tmpEnts.begin(), tmpEnts.end());
-		std::reverse(tmpEnts.begin(), tmpEnts.end());
 
+		auto tmpEnts = pickInfo.selectedEnts;
+
+		std::sort(tmpEnts.begin(), tmpEnts.end(), std::greater<int>());
+
+		if (std::find(tmpEnts.begin(), tmpEnts.end(), 0) != tmpEnts.end())
+		{
+			print_log("Cannot delete worldspawn entity!\n");
+			return;
+		}
+
+		for (auto entIdx : tmpEnts)
+		{
+			if (entIdx < map->ents.size() &&
+				map->ents[entIdx] &&
+				map->ents[entIdx]->hasKey("model") &&
+				ends_with(toLowerCase(map->ents[entIdx]->keyvalues["model"]), ".bsp"))
+			{
+				reloadbspmdls = true;
+			}
+		}
 
 		clearSelection();
 
 		for (auto entIdx : tmpEnts)
 		{
-			if (map->ents[entIdx]->hasKey("model") &&
-				ends_with(toLowerCase(map->ents[entIdx]->keyvalues["model"]), ".bsp"))
+			if (entIdx < map->ents.size() && map->ents[entIdx])
 			{
-				reloadbspmdls = true;
+				delete map->ents[entIdx];
+				map->ents.erase(map->ents.begin() + entIdx);
 			}
-			delete map->ents[entIdx];
-			map->ents.erase(map->ents.begin() + entIdx);
 		}
 
 		if (reloadbspmdls)
 		{
 			reloadBspModels();
 		}
-		g_app->pickInfo.selectedEnts.clear();
+
+		map->update_ent_lump();
+		pickInfo.selectedEnts.clear();
+		pickCount++;
+		filterNeeded = true;
+		map->getBspRender()->preRenderEnts();
 		map->getBspRender()->pushUndoState("Delete ents", FL_ENTITIES);
 	}
 }
@@ -5109,20 +5153,15 @@ Texture* Renderer::giveMeTexture(const std::string& texname, const std::string& 
 		{
 			if (wad->hasTexture(texname))
 			{
-				WADTEX* wadTex = wad->readTexture(texname);
-				if (wadTex)
+				WADTEX wadTex = wad->readTexture(texname);
+				COLOR3* imageData = ConvertWadTexToRGB(wadTex);
+				if (imageData)
 				{
-					COLOR3* imageData = ConvertWadTexToRGB(wadTex);
-					if (imageData)
-					{
-						Texture* tmpTex = new Texture(wadTex->nWidth, wadTex->nHeight, (unsigned char*)imageData, texname);
-						glExteralTextures_names.emplace_back(texname);
-						glExteralTextures_wads.emplace_back(toLowerCase(wad->wadname));
-						glExteralTextures_textures.emplace_back(tmpTex);
-						delete wadTex;
-						return tmpTex;
-					}
-					delete wadTex;
+					Texture* tmpTex = new Texture(wadTex.nWidth, wadTex.nHeight, (unsigned char*)imageData, texname);
+					glExteralTextures_names.emplace_back(texname);
+					glExteralTextures_wads.emplace_back(toLowerCase(wad->wadname));
+					glExteralTextures_textures.emplace_back(tmpTex);
+					return tmpTex;
 				}
 			}
 		}

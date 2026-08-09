@@ -17,9 +17,7 @@
 
 #include <lodepng.h>
 #include <execution>
-#ifndef WIN_XP_86
-#include <ranges>
-#endif
+#include <unordered_set>
 #include <algorithm>
 #include "LeafNavMesh.h"
 
@@ -121,7 +119,8 @@ void Gui::init()
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); 
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, (fmt == 0) ? GL_BGRA : GL_RGBA, GL_UNSIGNED_BYTE, data);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		return (void*)(size_t)tex;
@@ -284,13 +283,8 @@ void Gui::draw()
 	if (shouldReloadFonts)
 	{
 		shouldReloadFonts = false;
-
-		ImGui_ImplOpenGL3_DestroyFontsTexture();
 		imgui_io->Fonts->Clear();
-
 		loadFonts();
-
-		ImGui_ImplOpenGL3_CreateFontsTexture();
 	}
 }
 
@@ -408,7 +402,7 @@ int ImportModel(Bsp* map, const std::string& mdl_path, bool noclip)
 	std::vector<COLOR3> newLightmaps;
 	std::vector<BSPNODE32> newNodes;
 	std::vector<BSPCLIPNODE32> newClipnodes;
-	std::vector<WADTEX*> newTextures;
+	std::vector<WADTEX> newTextures;
 	std::vector<BSPLEAF32> newLeaves;
 	std::vector<int> newMarkSurfaces;
 
@@ -455,17 +449,16 @@ int ImportModel(Bsp* map, const std::string& mdl_path, bool noclip)
 		while (newTextures.size())
 		{
 			auto& tex = newTextures[newTextures.size() - 1];
-			if (tex->data)
+			if (tex.data.size())
 			{
 				auto data = ConvertWadTexToRGB(tex);
-				map->add_texture(tex->szName, (unsigned char*)data, tex->nWidth, tex->nHeight);
+				map->add_texture(tex.szName, (unsigned char*)data, tex.nWidth, tex.nHeight);
 				delete[]data;
 			}
 			else
 			{
-				map->add_texture(tex->szName, NULL, tex->nWidth, tex->nHeight);
+				map->add_texture(tex.szName, NULL, tex.nWidth, tex.nHeight);
 			}
-			delete tex;
 			newTextures.pop_back();
 		}
 	}
@@ -510,12 +503,11 @@ int ImportModel(Bsp* map, const std::string& mdl_path, bool noclip)
 				{
 					if (s->hasTexture(tex.szName))
 					{
-						WADTEX* wadTex = s->readTexture(tex.szName);
+						WADTEX wadTex = s->readTexture(tex.szName);
 						COLOR3* imageData = ConvertWadTexToRGB(wadTex);
 
-						newMiptex = map->add_texture(tex.szName, (unsigned char*)imageData, wadTex->nWidth, wadTex->nHeight);
+						newMiptex = map->add_texture(tex.szName, (unsigned char*)imageData, wadTex.nWidth, wadTex.nHeight);
 
-						delete wadTex;
 						delete[] imageData;
 						break;
 					}
@@ -648,7 +640,7 @@ void ExportModel(Bsp* src_map, const std::string& export_path, int model_id, int
 	std::vector<COLOR3> newLightmaps;
 	std::vector<BSPNODE32> newNodes;
 	std::vector<BSPCLIPNODE32> newClipnodes;
-	std::vector<WADTEX*> newTextures;
+	std::vector<WADTEX> newTextures;
 	std::vector<BSPLEAF32> newLeaves;
 	std::vector<int> newMarkSurfaces;
 
@@ -699,19 +691,18 @@ void ExportModel(Bsp* src_map, const std::string& export_path, int model_id, int
 		while (newTextures.size())
 		{
 			auto& tex = newTextures[newTextures.size() - 1];
-			if (tex->data && ExportType != 0)
+			if (tex.data.size() && ExportType != 0)
 			{
 				auto data = ConvertWadTexToRGB(tex);
-				int mip = bspModel->add_texture(tex->szName, (unsigned char*)data, tex->nWidth, tex->nHeight);
+				int mip = bspModel->add_texture(tex.szName, (unsigned char*)data, tex.nWidth, tex.nHeight);
 				delete[]data;
-				data = ConvertMipTexToRGB(bspModel->find_embedded_texture(tex->szName, mip));
+				data = ConvertMipTexToRGB(bspModel->find_embedded_texture(tex.szName, mip));
 				delete[]data;
 			}
 			else
 			{
-				bspModel->add_texture(tex->szName, NULL, tex->nWidth, tex->nHeight);
+				bspModel->add_texture(tex.szName, NULL, tex.nWidth, tex.nHeight);
 			}
-			delete tex;
 			newTextures.pop_back();
 		}
 	}
@@ -756,19 +747,18 @@ void ExportModel(Bsp* src_map, const std::string& export_path, int model_id, int
 				{
 					if (s->hasTexture(tex.szName))
 					{
-						WADTEX* wadTex = s->readTexture(tex.szName);
+						WADTEX wadTex = s->readTexture(tex.szName);
 						if (ExportType != 0)
 						{
 							COLOR3* imageData = ConvertWadTexToRGB(wadTex);
-							newMiptex = src_map->add_texture(tex.szName, (unsigned char*)imageData, wadTex->nWidth, wadTex->nHeight);
+							newMiptex = src_map->add_texture(tex.szName, (unsigned char*)imageData, wadTex.nWidth, wadTex.nHeight);
 							delete[] imageData;
 						}
 						else
 						{
-							newMiptex = src_map->add_texture(tex.szName, NULL, wadTex->nWidth, wadTex->nHeight);
+							newMiptex = src_map->add_texture(tex.szName, NULL, wadTex.nWidth, wadTex.nHeight);
 						}
 
-						delete wadTex;
 						break;
 					}
 				}
@@ -1577,91 +1567,73 @@ void Gui::drawBspContexMenu()
 					{
 						ImGui::EndDisabled();
 					}
-
 					bool IsValidForMerge = false;
-
+					std::vector<Entity*> toMerge;
 					if (app->pickInfo.selectedEnts.size() > 1)
 					{
 						IsValidForMerge = true;
-						for (auto& tmpentIdx : app->pickInfo.selectedEnts)
+						for (auto tmpentIdx : app->pickInfo.selectedEnts)
 						{
-							if (!map->ents[tmpentIdx]->isBspModel() || map->ents[tmpentIdx]->isWorldSpawn())
+							if (tmpentIdx < 0 || tmpentIdx >= (int)map->ents.size()) 
 							{
+								IsValidForMerge = false; break; 
+							}
+							Entity* e = map->ents[tmpentIdx];
+							if (!e->isBspModel() || e->isWorldSpawn()) {
 								IsValidForMerge = false;
 								break;
 							}
+							toMerge.push_back(e);
 						}
 					}
-
-					if (ImGui::MenuItem("MERGE BSPMODELS (WIP)", 0, false, !app->isLoading &&
-						IsValidForMerge))
+					// fixme
+					if (ImGui::MenuItem("MERGE BSPMODELS (WIP)", 0, false, !app->isLoading && IsValidForMerge))
 					{
-						std::vector<int> toMerge = app->pickInfo.selectedEnts;
-
-						std::vector<int> ents_to_erase;
-
-						app->deselectObject();
-
-						int merge_errors = 0;
+						std::vector<Entity*> toErasePtrs;
 
 						while (toMerge.size() > 1)
 						{
-							int ent1 = toMerge[toMerge.size() - 2];
-							int ent2 = toMerge[toMerge.size() - 1];
+							Entity* e1 = toMerge[toMerge.size() - 1];
+							Entity* e2 = toMerge[toMerge.size() - 2];
 
-							print_log(get_localized_string(LANG_1054), app->pickInfo.selectedEnts.size());
-
-							int try_again = false;
-							int newmodelid =
-								map->merge_two_models_ents(ent1, ent2, try_again);
-
-							int mdl1 = map->ents[ent1]->getBspModelIdx();
-							int mdl2 = map->ents[ent2]->getBspModelIdx();
-
-							if (newmodelid < 0)
-							{
-								print_log(PRINT_RED, "Model {} and {} is overlapped\n", mdl1, mdl2);
-								print_log(PRINT_RED, "Impossible to merge it!\n");
+							int newmodelid = map->merge_two_models_ents(e1, e2);
+							if (newmodelid < 0) {
+								print_log(PRINT_RED, "Merge failed for models {} and {}\n", e1->getBspModelIdx(), e2->getBspModelIdx());
 								break;
 							}
-
-							if (map->ents[ent1]->getBspModelIdx() != newmodelid)
-							{
-								ents_to_erase.push_back(ent1);
-								toMerge.erase(std::find(toMerge.begin(), toMerge.end(), ent1));
-							}
-							else
-							{
-								ents_to_erase.push_back(ent2);
-								toMerge.erase(std::find(toMerge.begin(), toMerge.end(), ent2));
-							}
+							e2->setOrAddKeyvalue("model", "*" + std::to_string(newmodelid));
+							e1->removeKeyvalue("model");
 
 							rend->refreshModel(newmodelid);
 							rend->refreshModelClipnodes(newmodelid);
+
+							toErasePtrs.push_back(e1);
+							toMerge.pop_back();
 						}
 
-
-						std::sort(ents_to_erase.begin(), ents_to_erase.end());
-						while (ents_to_erase.size())
-						{
-							map->ents.erase(map->ents.begin() + ents_to_erase[ents_to_erase.size() - 1]);
-							ents_to_erase.pop_back();
+						for (Entity* delent : toErasePtrs) {
+							auto it = std::find(map->ents.begin(), map->ents.end(), delent);
+							if (it != map->ents.end()) 
+							{
+								map->ents.erase(it);
+								delete delent;
+							}
 						}
+
+						map->update_ent_lump();
+						map->update_lump_pointers();
+						map->save_undo_lightmaps();
+
+						// Clean up unused structures
+						map->remove_unused_model_structures();
 
 						g_app->pickInfo.selectedEnts.clear();
-
 						rend->loadLightmaps();
-
-						rend->pushUndoState("MERGE {} and {} SELECTED BSP ENTITIES", EDIT_MODEL_LUMPS | FL_ENTITIES);
-
+						rend->pushUndoState("MERGE BSP ENTITIES", EDIT_MODEL_LUMPS | FL_ENTITIES);
 						rend->preRenderEnts();
-
-						if (merge_errors > 0)
-						{
-							print_log(PRINT_RED, "Found {} errors in models merging! Possible one model overlapped another!\n", merge_errors);
-						}
-
 					}
+
+
 					if (ImGui::IsItemHovered())
 					{
 						ImGui::BeginTooltip();
@@ -2741,6 +2713,15 @@ void Gui::drawMenuBar()
 						rend = NULL;
 						map = NULL;
 						app->selectMapId(0);
+
+						if (mapRenderers.empty())
+						{
+							for (auto& s : mdl_models)
+							{
+								delete s.second;
+							}
+							mdl_models.clear();
+						}
 					}
 				}
 			}
@@ -2762,6 +2743,12 @@ void Gui::drawMenuBar()
 						map = NULL;
 						app->selectMapId(0);
 						print_log(get_localized_string(LANG_0907));
+
+						for (auto& s : mdl_models)
+						{
+							delete s.second;
+						}
+						mdl_models.clear();
 					}
 				}
 			}
@@ -3321,16 +3308,11 @@ void Gui::drawMenuBar()
 									model_maxs += entity->origin;
 								}
 
-								auto faceIndices =
-#ifndef WIN_XP_86
-									std::views::iota(model.iFirstFace, model.iFirstFace + model.nFaces);
-#else 
-									std::vector<int>();
+								auto faceIndices = std::vector<int>();
 								for (int i = 0; i < model.nFaces; i++)
 								{
 									faceIndices.push_back(model.iFirstFace + i);
 								}
-#endif
 
 								std::vector<std::vector<vec3>> faceVecs(faceIndices.size());
 								for (size_t i = 0; i < faceIndices.size(); i++)
@@ -3819,9 +3801,9 @@ void Gui::drawMenuBar()
 							if (tex != missingTex)
 							{
 								if (tex->format == GL_RGBA)
-									lodepng_encode32_file((g_working_dir + map->bsp_name + "/dump_textures/" + std::string(tex->texName) + ".png").c_str(), (const unsigned char*)tex->get_data(), tex->width, tex->height);
+									lodepng_encode32_file((g_working_dir + map->bsp_name + "/dump_textures/" + std::string(tex->texName) + ".png").c_str(), (const unsigned char*)tex->getData(), tex->width, tex->height);
 								else
-									lodepng_encode24_file((g_working_dir + map->bsp_name + "/dump_textures/" + std::string(tex->texName) + ".png").c_str(), (const unsigned char*)tex->get_data(), tex->width, tex->height);
+									lodepng_encode24_file((g_working_dir + map->bsp_name + "/dump_textures/" + std::string(tex->texName) + ".png").c_str(), (const unsigned char*)tex->getData(), tex->width, tex->height);
 							}
 						}
 					}
@@ -3891,13 +3873,14 @@ void Gui::drawMenuBar()
 							entFilePath = g_working_dir + (map->bsp_name + ".ent");
 						}
 
-						print_log(get_localized_string(LANG_1052), entFilePath);
 						if (fileExists(entFilePath))
 						{
-							int len;
-							char* newlump = loadFile(entFilePath, len);
-							map->replace_lump(LUMP_ENTITIES, newlump, len);
-							delete[] newlump;
+							std::vector<unsigned char> entDat;
+							if (readFile(entFilePath, entDat))
+							{
+								map->replace_lump(LUMP_ENTITIES, entDat.data(), entDat.size());
+								print_log(get_localized_string(LANG_1052), entFilePath);
+							}
 							map->reload_ents();
 							g_app->updateEnts();
 							app->reloading = true;
@@ -4045,6 +4028,8 @@ void Gui::drawMenuBar()
 			if (ImGui::MenuItem(get_localized_string(LANG_0552).c_str(), 0, false, map && !map->is_mdl_model && !app->isLoading))
 			{
 				app->reloadMaps();
+				map = NULL;
+				rend = NULL;
 			}
 			if (ImGui::MenuItem(get_localized_string(LANG_0553).c_str(), 0, false, map && !map->is_mdl_model && !app->isLoading))
 			{
@@ -4277,7 +4262,8 @@ void Gui::drawMenuBar()
 			if (ImGui::MenuItem(get_localized_string(LANG_0564).c_str(), 0, false, !app->isLoading && map))
 			{
 				print_log(get_localized_string(LANG_0296), map->bsp_name);
-				map->remove_unused_model_structures().print_delete_stats(1);
+				map->remove_unused_model_structures().print_delete_stats(1); // buffer overflow?
+				map->validate();
 				rend->pushUndoState("Clean " + map->bsp_name, EDIT_MODEL_LUMPS);
 			}
 
@@ -4298,6 +4284,8 @@ void Gui::drawMenuBar()
 
 				removestats.print_delete_stats(1);
 				g_settings.verboseLogs = oldVerbose;
+
+				map->validate();
 
 				rend->pushUndoState("Optimize " + map->bsp_name, EDIT_MODEL_LUMPS | FL_ENTITIES);
 			}
@@ -4723,7 +4711,6 @@ void Gui::drawMenuBar()
 						{
 							map->verts[v] += offset;
 						}
-						map->remove_unused_model_structures();
 					}
 
 					map->remove_unused_model_structures();
@@ -6339,11 +6326,12 @@ void Gui::drawMenuBar()
 					int face = g_app->pickInfo.selectedFaces[0];
 					RenderFace* rface;
 					RenderGroup* rgroup;
-					rend->getRenderPointers(face, &rface, &rgroup);
-
-					if (rface && rgroup)
+					if (rend->getRenderPointers(face, &rface, &rgroup))
 					{
-						ImGui::TextUnformatted(fmt::format("Rend group [{}]", rface->group).c_str());
+						if (rface && rgroup)
+						{
+							ImGui::TextUnformatted(fmt::format("Rend group [{}]", rface->group).c_str());
+						}
 					}
 				}
 			}
@@ -7313,69 +7301,509 @@ void Gui::drawOverviewWidget()
 	ImGui::End();
 }
 
-
 void Gui::drawTextureBrowser()
 {
 	Bsp* map = app->getSelectedMap();
-	BspRenderer* mapRender = map ? map->getBspRender() : NULL;
-	ImGui::SetNextWindowSize(ImVec2(610.f, 610.f), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSizeConstraints(ImVec2(300.f, 100.f), ImVec2(FLT_MAX, app->windowHeight - 40.f));
-	//ImGui::SetNextWindowContentSize(ImVec2(550, 0.0f));
-	if (ImGui::Begin(fmt::format("{}###TEXTURE_BROWSER", get_localized_string(LANG_0651)).c_str(), &showTextureBrowser, 0))
+	BspRenderer* mapRender = map ? map->getBspRender() : nullptr;
+
+	ImGui::SetNextWindowSize(ImVec2(720.f, 640.f), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSizeConstraints(ImVec2(320.f, 120.f), ImVec2(FLT_MAX, app->windowHeight - 40.f));
+
+	if (!ImGui::Begin(fmt::format("{}###TEXTURE_BROWSER", get_localized_string(LANG_0651)).c_str(), &showTextureBrowser, 0))
 	{
-		if (ImGui::BeginTabBar("##tabs", ImGuiTabBarFlags_::ImGuiTabBarFlags_FittingPolicyScroll |
-			ImGuiTabBarFlags_::ImGuiTabBarFlags_NoCloseWithMiddleMouseButton |
-			ImGuiTabBarFlags_::ImGuiTabBarFlags_Reorderable))
+		ImGui::End();
+		return;
+	}
+
+	// Controls
+	static char textureFilterBuf[256] = "";
+	static float thumbSizeF = 96.0f;
+	static float fontSizeScale = 1.0f;
+
+	ImGui::PushItemWidth(300.0f);
+	ImGui::InputText("Filter", textureFilterBuf, sizeof(textureFilterBuf));
+	ImGui::PopItemWidth();
+	ImGui::SameLine();
+	if (ImGui::Button("Clear")) textureFilterBuf[0] = '\0';
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(120);
+	ImGui::SliderFloat("Size", &thumbSizeF, 64.0f, 160.0f, "%.0f");
+
+	fontSizeScale = thumbSizeF / 1.2f / 96.0f;
+	fontSizeScale = std::clamp(fontSizeScale, 0.4f, 1.2f);
+
+	std::string filter = toLowerCase(std::string(textureFilterBuf));
+	static std::string lastCopiedTextureName;
+	static int lastCopiedMiptex = -1;
+
+	// persistent preview cache
+	static std::unordered_map<std::string, Texture*> previewCache;
+	static size_t lastAllTexturesCount = 0;
+	if (previewCache.empty() || g_all_Textures.size() != lastAllTexturesCount)
+	{
+		previewCache.clear();
+		for (auto t : g_all_Textures) {
+			if (!t) continue;
+			previewCache[toLowerCase(t->texName)] = t;
+		}
+		lastAllTexturesCount = g_all_Textures.size();
+	}
+
+	// pending WAD loads (limited per frame)
+	static std::vector<std::tuple<Wad*, int, std::string>> pendingWadLoads;
+	const int MAX_LOADS_PER_FRAME = 2;
+	auto enqueueWadLoad = [&](Wad* wad, int dirIndex, const std::string& texName) {
+		std::string key = toLowerCase(texName);
+		if (previewCache.find(key) != previewCache.end()) return;
+		for (auto& p : pendingWadLoads) {
+			if (std::get<0>(p) == wad && std::get<1>(p) == dirIndex) return;
+		}
+		pendingWadLoads.emplace_back(wad, dirIndex, texName);
+		};
+
+	for (int l = 0; l < MAX_LOADS_PER_FRAME && !pendingWadLoads.empty(); ++l) {
+		auto task = pendingWadLoads.front();
+		pendingWadLoads.erase(pendingWadLoads.begin());
+		Wad* wad = std::get<0>(task);
+		int dirIndex = std::get<1>(task);
+		std::string texName = std::get<2>(task);
+		if (!wad) continue;
+		if (!wad->hasTexture(dirIndex)) continue;
+		WADTEX wtex = wad->readTexture(dirIndex);
+		if (wtex.nWidth <= 0 || wtex.nHeight <= 0) continue;
+		COLOR4* rgba = ConvertWadTexToRGBA(wtex, NULL, 256);
+		if (!rgba) continue;
+
+		int tw = std::max(8, (int)thumbSizeF);
+		int th = tw;
+		std::vector<COLOR4> scaled;
+		scaleImage(rgba, scaled, wtex.nWidth, wtex.nHeight, tw, th);
+		delete[] rgba;
+
+		size_t bytes = (size_t)tw * (size_t)th * 4;
+		unsigned char* buf = new unsigned char[bytes];
+		memcpy(buf, scaled.data(), bytes);
+
+		Texture* t = new Texture((GLsizei)tw, (GLsizei)th, buf, texName, true, true);
+		t->upload(Texture::TYPE_TEXTURE);
+		t->setWadName(basename(wad->filename));
+		previewCache[toLowerCase(texName)] = t;
+		lastAllTexturesCount = g_all_Textures.size();
+	}
+
+	// Top selection info
+	auto isTextureInMap = [&](const std::string& name)->int {
+		if (!map) return -1;
+		std::string low = toLowerCase(name);
+		for (int i = 0; i < map->textureCount; ++i) {
+			int texOffset = ((int*)map->textures)[i + 1];
+			if (texOffset < 0) continue;
+			BSPMIPTEX* tex = (BSPMIPTEX*)(map->textures + texOffset);
+			if (!tex) continue;
+			if (toLowerCase(tex->szName) == low) return i;
+		}
+		return -1;
+		};
+
+	ImGui::Separator();
+	if (copiedMiptex >= 0) {
+		std::string name = lastCopiedTextureName.empty() ? fmt::format("index {}", copiedMiptex) : lastCopiedTextureName;
+		int idx = isTextureInMap(name);
+		ImGui::Text("Selected: %s", name.c_str());
+		if (idx >= 0) {
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.2f, 1.0f), "(in map index %d)", idx);
+		}
+		else {
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "(Not in map)");
+		}
+	}
+	else if (!lastCopiedTextureName.empty()) {
+		int idx = isTextureInMap(lastCopiedTextureName);
+		ImGui::Text("Selected: %s", lastCopiedTextureName.c_str());
+		if (idx >= 0) {
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.2f, 1.0f), "(in map index %d)", idx);
+		}
+		else {
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "(Not in map)");
+		}
+	}
+	else {
+		ImGui::Text("Selected: None");
+	}
+	ImGui::Separator();
+
+	if (ImGui::BeginTabBar("##texture_browser_tabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoCloseWithMiddleMouseButton | ImGuiTabBarFlags_Reorderable))
+	{
+		// Fixed height child window for grid (scrollable area)
+		float footerHeight = 60.0f; // Space for Apply button
+		float childHeight = ImGui::GetContentRegionAvail().y - footerHeight;
+		if (childHeight < 100.0f) childHeight = 100.0f;
+
+		// Internal map textures tab
+		if (ImGui::BeginTabItem(get_localized_string(LANG_0652).c_str()))
 		{
-			ImGui::Dummy(ImVec2(0, 10));
-			if (ImGui::BeginTabItem(get_localized_string(LANG_0652).c_str()))
+			ImGui::BeginChild("##texture_grid_internal", ImVec2(0, childHeight), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+			if (map)
 			{
-				ImGui::Dummy(ImVec2(0, 10));
+				std::vector<std::pair<std::string, int>> internalTextures;
+				internalTextures.reserve(std::max(0, map->textureCount));
+				for (int i = 0; i < map->textureCount; ++i)
+				{
+					int texOffset = ((int*)map->textures)[i + 1];
+					if (texOffset < 0) continue;
+					BSPMIPTEX* tex = (BSPMIPTEX*)(map->textures + texOffset);
+					if (!tex) continue;
+					std::string texName = tex->szName;
+					if (!filter.empty() && toLowerCase(texName).find(filter) == std::string::npos) continue;
+					internalTextures.emplace_back(texName, i);
+				}
+
+				float availW = ImGui::GetContentRegionAvail().x;
+				const float padding = 8.0f;
+				const float cellW = thumbSizeF + padding;
+				int columns = std::max(1, (int)floor((availW + padding) / cellW));
+				int total = (int)internalTextures.size();
+				int rows = (total + columns - 1) / columns;
+				float textH = ImGui::CalcTextSize("Ay").y * fontSizeScale;
+				float rowHeight = thumbSizeF + textH + 8.0f;
+
+				ImVec2 originScreen = ImGui::GetCursorScreenPos();
 				ImGuiListClipper clipper;
-				clipper.Begin(1, 30.0f);
+				clipper.Begin(rows, rowHeight);
+				ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
 				while (clipper.Step())
 				{
-
-				}
-				clipper.End();
-				ImGui::EndTabItem();
-			}
-
-			if (ImGui::BeginTabItem(get_localized_string(LANG_0653).c_str()))
-			{
-				ImGui::Dummy(ImVec2(0, 10));
-				ImGuiListClipper clipper;
-				clipper.Begin(1, 30.0f);
-				while (clipper.Step())
-				{
-
-				}
-				clipper.End();
-				ImGui::EndTabItem();
-			}
-
-			if (mapRender)
-			{
-				for (auto& wad : mapRender->wads)
-				{
-					if (ImGui::BeginTabItem(basename(wad->filename).c_str()))
+					for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
 					{
-						ImGui::Dummy(ImVec2(0, 10));
-						ImGuiListClipper clipper;
-						clipper.Begin(1, 30.0f);
-						while (clipper.Step())
+						float y = originScreen.y + row * rowHeight;
+						for (int col = 0; col < columns; ++col)
 						{
+							int idx = row * columns + col;
+							if (idx >= total) break;
 
+							const auto& entry = internalTextures[idx];
+							const std::string texName = entry.first;
+							int texIdx = entry.second;
+
+							float x = originScreen.x + col * cellW;
+							ImGui::SetCursorScreenPos(ImVec2(x, y));
+							ImGui::PushID(1000000 + idx);
+							ImGui::BeginGroup();
+
+							Texture* previewTex = nullptr;
+							auto it = previewCache.find(toLowerCase(texName));
+							if (it != previewCache.end()) previewTex = it->second;
+
+							GLuint texId = missingTex ? missingTex->id : 0;
+							if (previewTex && previewTex->id != 0xFFFFFFFF && previewTex->id != 0) texId = previewTex->id;
+
+							ImTextureRef texRef = ImTextureRef((ImTextureID)(intptr_t)texId);
+							std::string btnId = std::string("internal_texbtn_") + std::to_string(idx);
+							if (ImGui::ImageButton(btnId.c_str(), texRef, ImVec2(thumbSizeF, thumbSizeF), ImVec2(0, 0), ImVec2(1, 1)))
+							{
+								copiedMiptex = texIdx;
+								lastCopiedTextureName = texName;
+							}
+
+							if (ImGui::IsItemHovered())
+							{
+								ImGui::BeginTooltip();
+								ImGui::Text("Index: %d", texIdx);
+								ImGui::Text("Name: %s", texName.c_str());
+								ImGui::EndTooltip();
+							}
+
+							bool isSelected = (!lastCopiedTextureName.empty() && toLowerCase(lastCopiedTextureName) == toLowerCase(texName)) || (copiedMiptex == texIdx);
+							if (isSelected) {
+								ImVec2 a = ImGui::GetItemRectMin();
+								ImVec2 b = ImGui::GetItemRectMax();
+								ImGui::GetWindowDrawList()->AddRect(a, b, IM_COL32(255, 200, 0, 255), 4.0f, 0, 3.0f);
+							}
+
+							// Texture name with scaled font
+							std::string displayName = texName;
+							ImVec2 textPos = ImVec2(x, y + thumbSizeF + 4.0f);
+							ImGui::SetCursorScreenPos(textPos);
+							ImGui::PushClipRect(ImVec2(x, y + thumbSizeF), ImVec2(x + cellW, y + rowHeight), true);
+							ImGui::PushFont(smallFont);
+							ImGui::SetWindowFontScale(fontSizeScale);
+							ImGui::Text("%s", displayName.c_str());
+							ImGui::SetWindowFontScale(1.0f);
+							ImGui::PopFont();
+							ImGui::PopClipRect();
+
+							ImGui::EndGroup();
+							ImGui::PopID();
 						}
-						clipper.End();
-						ImGui::EndTabItem();
+						// Add Dummy to extend window boundaries after each row
+						ImGui::SetCursorScreenPos(ImVec2(originScreen.x, y + rowHeight));
+						ImGui::Dummy(ImVec2(availW, 0));
 					}
 				}
+				ImGui::PopStyleVar();
+				clipper.End();
+			}
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
+		// Used textures in map tab
+		if (ImGui::BeginTabItem(get_localized_string(LANG_0653).c_str()))
+		{
+			ImGui::BeginChild("##texture_grid_used", ImVec2(0, childHeight), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+			if (map && map->texinfos && map->texinfoCount > 0)
+			{
+				std::unordered_set<std::string> uniqueTexNames;
+				std::vector<std::pair<std::string, int>> usedTextures;
+				for (int i = 0; i < map->texinfoCount; ++i)
+				{
+					BSPTEXTUREINFO& texInfo = map->texinfos[i];
+					if (texInfo.iMiptex >= 0 && texInfo.iMiptex < map->textureCount)
+					{
+						int texOffset = ((int*)map->textures)[texInfo.iMiptex + 1];
+						if (texOffset >= 0)
+						{
+							BSPMIPTEX* tex = (BSPMIPTEX*)(map->textures + texOffset);
+							if (tex)
+							{
+								std::string texName = tex->szName;
+								if (uniqueTexNames.find(texName) == uniqueTexNames.end())
+								{
+									uniqueTexNames.insert(texName);
+									if (!filter.empty() && toLowerCase(texName).find(filter) == std::string::npos) continue;
+									usedTextures.emplace_back(texName, texInfo.iMiptex);
+								}
+							}
+						}
+					}
+				}
+
+				float availW = ImGui::GetContentRegionAvail().x;
+				const float padding = 8.0f;
+				const float cellW = thumbSizeF + padding;
+				int columns = std::max(1, (int)floor((availW + padding) / cellW));
+				int total = (int)usedTextures.size();
+				int rows = (total + columns - 1) / columns;
+				float textH = ImGui::CalcTextSize("Ay").y * fontSizeScale;
+				float rowHeight = thumbSizeF + textH + 8.0f;
+
+				ImVec2 originScreen = ImGui::GetCursorScreenPos();
+				ImGuiListClipper clipper;
+				clipper.Begin(rows, rowHeight);
+				ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
+				while (clipper.Step())
+				{
+					for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+					{
+						float y = originScreen.y + row * rowHeight;
+						for (int col = 0; col < columns; ++col)
+						{
+							int idx = row * columns + col;
+							if (idx >= total) break;
+
+							const auto& entry = usedTextures[idx];
+							const std::string texName = entry.first;
+							int texIdx = entry.second;
+
+							float x = originScreen.x + col * cellW;
+							ImGui::SetCursorScreenPos(ImVec2(x, y));
+							ImGui::PushID(2000000 + idx);
+							ImGui::BeginGroup();
+
+							Texture* previewTex = nullptr;
+							auto it = previewCache.find(toLowerCase(texName));
+							if (it != previewCache.end()) previewTex = it->second;
+
+							GLuint texId = missingTex ? missingTex->id : 0;
+							if (previewTex && previewTex->id != 0xFFFFFFFF && previewTex->id != 0) texId = previewTex->id;
+
+							ImTextureRef texRef = ImTextureRef((ImTextureID)(intptr_t)texId);
+							std::string btnId = std::string("used_texbtn_") + std::to_string(idx);
+							if (ImGui::ImageButton(btnId.c_str(), texRef, ImVec2(thumbSizeF, thumbSizeF), ImVec2(0, 0), ImVec2(1, 1)))
+							{
+								copiedMiptex = texIdx;
+								lastCopiedTextureName = texName;
+							}
+
+							bool isSelected = (!lastCopiedTextureName.empty() && toLowerCase(lastCopiedTextureName) == toLowerCase(texName)) || (copiedMiptex == texIdx);
+							if (isSelected) {
+								ImVec2 a = ImGui::GetItemRectMin();
+								ImVec2 b = ImGui::GetItemRectMax();
+								ImGui::GetWindowDrawList()->AddRect(a, b, IM_COL32(255, 200, 0, 255), 4.0f, 0, 3.0f);
+							}
+
+							// Texture name with scaled font
+							std::string displayName = texName;
+							ImVec2 textPos = ImVec2(x, y + thumbSizeF + 4.0f);
+							ImGui::SetCursorScreenPos(textPos);
+							ImGui::PushClipRect(ImVec2(x, y + thumbSizeF), ImVec2(x + cellW, y + rowHeight), true);
+							ImGui::PushFont(smallFont);
+							ImGui::SetWindowFontScale(fontSizeScale);
+							ImGui::Text("%s", displayName.c_str());
+							ImGui::SetWindowFontScale(1.0f);
+							ImGui::PopFont();
+							ImGui::PopClipRect();
+
+							ImGui::EndGroup();
+							ImGui::PopID();
+						}
+						// Add Dummy to extend window boundaries after each row
+						ImGui::SetCursorScreenPos(ImVec2(originScreen.x, y + rowHeight));
+						ImGui::Dummy(ImVec2(availW, 0));
+					}
+				}
+				ImGui::PopStyleVar();
+				clipper.End();
+			}
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
+		// Per-WAD tabs
+		if (mapRender)
+		{
+			for (size_t wadIdx = 0; wadIdx < mapRender->wads.size(); ++wadIdx)
+			{
+				Wad* wad = mapRender->wads[wadIdx];
+				if (!wad) continue;
+				if (wad->dirEntries.empty()) wad->readInfo();
+
+				std::string tabName = basename(wad->filename);
+				if (!ImGui::BeginTabItem(tabName.c_str())) continue;
+
+				ImGui::BeginChild("##texture_grid_wad", ImVec2(0, childHeight), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+				float availW = ImGui::GetContentRegionAvail().x;
+				const float padding = 8.0f;
+				const float cellW = thumbSizeF + padding;
+				int columns = std::max(1, (int)floor((availW + padding) / cellW));
+				std::vector<std::string> names;
+				std::vector<int> indices;
+				for (int texIdx = 0; texIdx < (int)wad->dirEntries.size(); ++texIdx) {
+					if (wad->dirEntries[texIdx].nType == 0x43) {
+						std::string texName = wad->dirEntries[texIdx].szName;
+						if (!filter.empty() && toLowerCase(texName).find(filter) == std::string::npos)
+							continue;
+						names.push_back(texName);
+						indices.push_back(texIdx);
+					}
+				}
+
+				int total = (int)names.size();
+				int rows = (total + columns - 1) / columns;
+				float textH = ImGui::CalcTextSize("Ay").y * fontSizeScale;
+				float rowHeight = thumbSizeF + textH + 8.0f;
+
+				ImVec2 originScreen = ImGui::GetCursorScreenPos();
+				ImGuiListClipper clipper;
+				clipper.Begin(rows, rowHeight);
+				ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
+				while (clipper.Step())
+				{
+					for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+					{
+						float y = originScreen.y + row * rowHeight;
+						for (int col = 0; col < columns; ++col)
+						{
+							int ii = row * columns + col;
+							if (ii >= total) break;
+
+							const std::string texName = names[ii];
+							int texIdx = indices[ii];
+
+							float x = originScreen.x + col * cellW;
+							ImGui::SetCursorScreenPos(ImVec2(x, y));
+							ImGui::PushID((int)(3000000 + wadIdx * 100000 + ii));
+							ImGui::BeginGroup();
+
+							Texture* previewTex = nullptr;
+							auto it = previewCache.find(toLowerCase(texName));
+							if (it != previewCache.end()) previewTex = it->second;
+
+							if (!previewTex && wad->hasTexture(texIdx)) {
+								enqueueWadLoad(wad, texIdx, texName);
+							}
+
+							GLuint texId = missingTex ? missingTex->id : 0;
+							if (previewTex && previewTex->id != 0xFFFFFFFF && previewTex->id != 0) texId = previewTex->id;
+
+							ImTextureRef texRef = ImTextureRef((ImTextureID)(intptr_t)texId);
+							std::string btnId = std::string("wad_single_texbtn_") + std::to_string(wadIdx) + "_" + std::to_string(ii);
+							if (ImGui::ImageButton(btnId.c_str(), texRef, ImVec2(thumbSizeF, thumbSizeF), ImVec2(0, 0), ImVec2(1, 1)))
+							{
+								if (previewTex) lastCopiedTextureName = previewTex->texName;
+								else lastCopiedTextureName = texName;
+								copiedMiptex = -1;
+							}
+
+							if (ImGui::IsItemHovered())
+							{
+								ImGui::BeginTooltip();
+								ImGui::Text("File: %s", basename(wad->filename).c_str());
+								ImGui::Text("Name: %s", texName.c_str());
+								ImGui::Text("Entry: %d", texIdx);
+								ImGui::EndTooltip();
+							}
+
+							// Texture name with entry number and scaled font
+							std::string displayName = fmt::format("{} ({})", texName, texIdx);
+							ImVec2 textPos = ImVec2(x, y + thumbSizeF + 4.0f);
+							ImGui::SetCursorScreenPos(textPos);
+							ImGui::PushClipRect(ImVec2(x, y + thumbSizeF), ImVec2(x + cellW, y + rowHeight), true);
+							ImGui::PushFont(smallFont);
+							ImGui::SetWindowFontScale(fontSizeScale);
+							ImGui::Text("%s", displayName.c_str());
+							ImGui::SetWindowFontScale(1.0f);
+							ImGui::PopFont();
+							ImGui::PopClipRect();
+
+							ImGui::EndGroup();
+							ImGui::PopID();
+						}
+						// Add Dummy to extend window boundaries after each row
+						ImGui::SetCursorScreenPos(ImVec2(originScreen.x, y + rowHeight));
+						ImGui::Dummy(ImVec2(availW, 0));
+					}
+				}
+				ImGui::PopStyleVar();
+				clipper.End();
+
+				ImGui::EndChild();
+				ImGui::EndTabItem();
 			}
 		}
-		ImGui::EndTabBar();
 
+		ImGui::EndTabBar();
 	}
+
+	// Footer with Apply button and selection summary (fixed at bottom)
+	ImGui::Separator();
+	ImGui::BeginGroup();
+	ImGui::Text("Selected: %s", lastCopiedTextureName.empty() ? "None" : lastCopiedTextureName.c_str());
+	ImGui::SameLine();
+	if (copiedMiptex >= 0) ImGui::Text("(BSP index: %d)", copiedMiptex);
+	ImGui::EndGroup();
+
+	if (ImGui::Button("Apply Selected Texture", ImVec2(-1, 30)))
+	{
+		if (copiedMiptex >= 0 && map) {
+			pasteTexture();
+			print_log("Applied texture: %s (index: %d)\n", lastCopiedTextureName.c_str(), copiedMiptex);
+		}
+		else if (!lastCopiedTextureName.empty()) {
+			print_log("Texture selected (WAD): %s\n", lastCopiedTextureName.c_str());
+		}
+		else {
+			print_log(PRINT_RED | PRINT_INTENSITY, "No texture selected");
+		}
+	}
+
 	ImGui::End();
 }
 
@@ -9912,7 +10340,7 @@ void Gui::drawSettings()
 
 			ImGui::SetNextItemWidth(pathWidth / 2);
 			static std::string newEngine = "engine-name";
-			ImGui::InputText("", &newEngine);
+			ImGui::InputText("##engine-name", &newEngine);
 			ImGui::SameLine();
 			if (ImGui::Button("Add##NEW ENGINE"))
 			{
@@ -10276,7 +10704,7 @@ void Gui::drawAbout()
 			ImGui::EndTooltip();
 		}
 
-		static char help1[] = "https://t.me/ninjac0w\nhttps://github.com/Qwertyus3D\nhttps://hlfx.ru/forum/member.php?action=getinfo&userid=3\ntwhl community\netc";
+		static char help1[] = "https://github.com/Qwertyus3D\nhttps://t.me/AKG6669\nhttps://hlfx.ru/forum/member.php?action=getinfo&userid=3\ntwhl community\netc";
 		ImGui::InputTextMultiline("Special thanks to:", help1, strlen(help1), ImVec2(0, 45), ImGuiInputTextFlags_ReadOnly);
 		if (ImGui::IsItemHovered())
 		{
@@ -11522,39 +11950,102 @@ bool ColorPicker4(ImGuiIO* imgui_io, float col[4])
 
 std::vector<COLOR3> colordata;
 
+static const int ATLAS_SPACING = 1;
 
 int LMapMaxWidth = 512;
 
 void DrawImageAtOneBigLightMap(COLOR3* img, int w, int h, int x, int y)
 {
-	for (int x1 = 0; x1 < w; x1++)
-	{
-		for (int y1 = 0; y1 < h; y1++)
-		{
-			int offset = ArrayXYtoId(w, x1, y1);
-			int offset2 = ArrayXYtoId(LMapMaxWidth, x + x1, y + y1);
+	if (!img || w <= 0 || h <= 0) return;
+	int bottom = y + h;
+	size_t required = (size_t)LMapMaxWidth * (size_t)bottom;
+	if (colordata.size() < required) colordata.resize(required, COLOR3(0, 0, 255));
 
-			while (offset2 >= (int)colordata.size())
+	for (int yy = 0; yy < h; ++yy)
+	{
+		int dstRow = (y + yy) * LMapMaxWidth;
+		int srcRow = yy * w;
+		for (int xx = 0; xx < w; ++xx)
+		{
+			int dstIdx = dstRow + (x + xx);
+			int srcIdx = srcRow + xx;
+			if (dstIdx >= 0 && dstIdx < (int)colordata.size())
 			{
-				colordata.emplace_back(COLOR3(0, 0, 255));
+				colordata[dstIdx] = img[srcIdx];
 			}
-			colordata[offset2] = img[offset];
 		}
 	}
 }
 
 void DrawOneBigLightMapAtImage(COLOR3* img, int w, int h, int x, int y)
 {
-	for (int x1 = 0; x1 < w; x1++)
-	{
-		for (int y1 = 0; y1 < h; y1++)
-		{
-			int offset = ArrayXYtoId(w, x1, y1);
-			int offset2 = ArrayXYtoId(LMapMaxWidth, x + x1, y + y1);
+	if (!img || w <= 0 || h <= 0) return;
 
-			img[offset] = colordata[offset2];
+	for (int yy = 0; yy < h; ++yy)
+	{
+		int dstRow = yy * w;
+		int srcRow = (y + yy) * LMapMaxWidth;
+		for (int xx = 0; xx < w; ++xx)
+		{
+			int srcIdx = srcRow + (x + xx);
+			int dstIdx = dstRow + xx;
+			if (srcIdx >= 0 && srcIdx < (int)colordata.size())
+				img[dstIdx] = colordata[srcIdx];
+			else
+				img[dstIdx] = COLOR3(0, 0, 255);
 		}
 	}
+}
+
+struct PackEntry {
+	int faceIdx;
+	int x, y;
+	int w, h;
+	int lightId;
+};
+
+static std::vector<PackEntry> PackFacesDeterministic(Bsp* map, const std::vector<int>& faces, int lightId, int atlasWidth, int& outAtlasHeight)
+{
+	std::vector<PackEntry> entries;
+	int current_x = 0;
+	int current_y = 0;
+	int max_row_height = 0;
+	int global_max_y = 0;
+
+	for (int faceIdx : faces)
+	{
+		if (map->faces[faceIdx].nLightmapOffset < 0 || map->faces[faceIdx].nStyles[lightId] == 255)
+			continue;
+
+		int size[2];
+		if (!map->GetFaceLightmapSize(faceIdx, size)) continue;
+		int sizeX = size[0], sizeY = size[1];
+		if (sizeX <= 0 || sizeY <= 0) continue;
+
+		if (current_x + sizeX > atlasWidth)
+		{
+			current_y += max_row_height + ATLAS_SPACING;
+			current_x = 0;
+			max_row_height = 0;
+		}
+
+		PackEntry e;
+		e.faceIdx = faceIdx;
+		e.lightId = lightId;
+		e.x = current_x;
+		e.y = current_y;
+		e.w = sizeX;
+		e.h = sizeY;
+		entries.push_back(e);
+
+		current_x += sizeX + ATLAS_SPACING;
+		if (sizeY > max_row_height) max_row_height = sizeY;
+		int bottom = current_y + sizeY;
+		if (bottom > global_max_y) global_max_y = bottom;
+	}
+
+	outAtlasHeight = std::max(1, global_max_y);
+	return entries;
 }
 
 std::vector<int> faces_to_export;
@@ -11563,71 +12054,94 @@ void ImportOneBigLightmapFile(Bsp* map)
 {
 	if (!faces_to_export.size())
 	{
-		print_log(get_localized_string(LANG_0405), map->faceCount);
-		for (int faceIdx = 0; faceIdx < map->faceCount; faceIdx++)
-		{
+		for (int faceIdx = 0; faceIdx < map->faceCount; ++faceIdx)
 			faces_to_export.push_back(faceIdx);
-		}
 	}
 
-	for (int lightId = 0; lightId < MAX_LIGHTMAPS; lightId++)
+	for (int lightId = 0; lightId < MAX_LIGHTMAPS; ++lightId)
 	{
-		colordata = std::vector<COLOR3>();
-		int current_x = 0;
-		int current_y = 0;
-		int max_y_found = 0;
-		//print_log(get_localized_string(LANG_0406),lightId);
-		std::string filename = fmt::format(fmt::runtime(get_localized_string(LANG_0407)), g_working_dir.c_str(), get_localized_string(LANG_0408), lightId);
-		unsigned char* image_bytes;
-		unsigned int w2, h2;
+		std::string filename = fmt::format(fmt::runtime(get_localized_string(LANG_0407)),
+			g_working_dir.c_str(),
+			get_localized_string(LANG_0408),
+			lightId);
+
+		unsigned char* image_bytes = nullptr;
+		unsigned int w2 = 0, h2 = 0;
 		auto error = lodepng_decode24_file(&image_bytes, &w2, &h2, filename.c_str());
-
-		if (error == 0 && image_bytes)
+		if (error != 0 || !image_bytes)
 		{
-			/*for (int i = 0; i < 100; i++)
+			if (image_bytes) free(image_bytes);
+			continue;
+		}
+
+		colordata.clear();
+		try {
+			colordata.resize((size_t)w2 * (size_t)h2);
+			for (size_t i = 0, j = 0; i < colordata.size(); ++i, j += 3)
 			{
-				print_log("{}/", image_bytes[i]);
-			}*/
-			colordata.clear();
-			colordata.resize(w2 * h2);
-			memcpy(&colordata[0], image_bytes, w2 * h2 * sizeof(COLOR3));
-			free(image_bytes);
-			for (int faceIdx : faces_to_export)
-			{
-				if (map->faces[faceIdx].nLightmapOffset < 0 || map->faces[faceIdx].nStyles[lightId] == 255)
-					continue;
-
-				int size[2];
-				map->GetFaceLightmapSize((int)faceIdx, size);
-
-				int sizeX = size[0], sizeY = size[1];
-
-				int lightmapSz = sizeX * sizeY * sizeof(COLOR3);
-
-				int offset = map->faces[faceIdx].nLightmapOffset + lightId * lightmapSz;
-
-				if (sizeY > max_y_found)
-					max_y_found = sizeY;
-
-				if (current_x + sizeX + 1 > LMapMaxWidth)
-				{
-					current_y += max_y_found + 1;
-					max_y_found = sizeY;
-					current_x = 0;
-				}
-
-				unsigned char* lightmapData = new unsigned char[lightmapSz];
-
-				DrawOneBigLightMapAtImage((COLOR3*)(lightmapData), sizeX, sizeY, current_x, current_y);
-				memcpy((unsigned char*)(map->lightdata + offset), lightmapData, lightmapSz);
-
-				delete[] lightmapData;
-
-				current_x += sizeX + 1;
+				colordata[i].r = image_bytes[j + 0];
+				colordata[i].g = image_bytes[j + 1];
+				colordata[i].b = image_bytes[j + 2];
 			}
+		}
+		catch (...) {
+			free(image_bytes);
+			print_log(PRINT_RED | PRINT_INTENSITY, "Memory error while loading atlas");
+			continue;
+		}
+		free(image_bytes);
+
+		int atlasHeight = 0;
+		auto entries = PackFacesDeterministic(map, faces_to_export, lightId, LMapMaxWidth, atlasHeight);
+
+		int atlasW = (int)w2;
+		int atlasH = (int)h2;
+
+		for (const auto& e : entries)
+		{
+			int faceIdx = e.faceIdx;
+			int sizeX = e.w, sizeY = e.h;
+			int lightmapSz = sizeX * sizeY * sizeof(COLOR3);
+			int offset = map->faces[faceIdx].nLightmapOffset + lightId * lightmapSz;
+
+			int sizeCheck[2];
+			if (!map->GetFaceLightmapSize(faceIdx, sizeCheck)) continue;
+			if (sizeCheck[0] != sizeX || sizeCheck[1] != sizeY)
+			{
+				print_log(PRINT_RED | PRINT_INTENSITY, "Face %d size changed since export: skip import for this face", faceIdx);
+				continue;
+			}
+
+			if (!map->lightdata || offset < 0 || (size_t)offset + lightmapSz > map->lightDataLength)
+			{
+				print_log(PRINT_RED | PRINT_INTENSITY, "Skipping write to map->lightdata: out of bounds or null (face %d)", faceIdx);
+				continue;
+			}
+
+			std::vector<COLOR3> tmp;
+			tmp.resize(sizeX * sizeY);
+			for (int yy = 0; yy < sizeY; ++yy)
+			{
+				for (int xx = 0; xx < sizeX; ++xx)
+				{
+					int srcX = e.x + xx;
+					int srcY = e.y + yy;
+					if (srcX < 0 || srcY < 0 || srcX >= atlasW || srcY >= atlasH)
+					{
+						tmp[yy * sizeX + xx] = COLOR3(0, 0, 255);
+					}
+					else
+					{
+						tmp[yy * sizeX + xx] = colordata[srcY * atlasW + srcX];
+					}
+				}
+			}
+
+			memcpy((unsigned char*)(map->lightdata + offset), (unsigned char*)tmp.data(), lightmapSz);
 		}
 	}
 }
+
 
 float RandomFloat(float a, float b)
 {
@@ -11644,109 +12158,68 @@ std::map<float, float> mapz;
 void Gui::ExportOneBigLightmap(Bsp* map)
 {
 	std::string filename;
-
 	faces_to_export.clear();
 
 	if (app->pickInfo.selectedFaces.size() > 1)
 	{
-		print_log(get_localized_string(LANG_0409), (unsigned int)app->pickInfo.selectedFaces.size());
 		faces_to_export = app->pickInfo.selectedFaces;
 	}
 	else
 	{
-		print_log(get_localized_string(LANG_0410), map->faceCount);
-		for (int faceIdx = 0; faceIdx < map->faceCount; faceIdx++)
-		{
+		for (int faceIdx = 0; faceIdx < map->faceCount; ++faceIdx)
 			faces_to_export.push_back(faceIdx);
-		}
 	}
 
-	/*std::vector<vec3> verts;
-	for (int i = 0; i < map->vertCount; i++)
+	for (int lightId = 0; lightId < MAX_LIGHTMAPS; ++lightId)
 	{
-		verts.push_back(map->verts[i]);
-	}
-	std::reverse(verts.begin(), verts.end());
-	for (int i = 0; i < map->vertCount; i++)
-	{
-		map->verts[i] = verts[i];
-	}*/
-	/*for (int i = 0; i < map->vertCount; i++)
-	{
-		vec3* vector = &map->verts[i];
-		vector->y *= -1;
-		vector->x *= -1;
-		/*if (mapz.find(vector->z) == mapz.end())
-			mapz[vector->z] = RandomFloat(-100, 100);
-		vector->z -= mapz[vector->z];*/
+		colordata.clear();
+		int atlasHeight = 0;
 
-		/*if (mapx.find(vector->x) == mapx.end())
-			mapx[vector->x] = RandomFloat(-50, 50);
-		vector->x += mapx[vector->x];
+		auto entries = PackFacesDeterministic(map, faces_to_export, lightId, LMapMaxWidth, atlasHeight);
 
-		if (mapy.find(vector->y) == mapy.end())
-			mapy[vector->y] = RandomFloat(-50, 50);
-		vector->y -= mapy[vector->y];
+		if (entries.empty()) continue;
 
+		size_t required = (size_t)LMapMaxWidth * (size_t)atlasHeight;
+		colordata.resize(required, COLOR3(0, 0, 255));
 
-		/*vector->x *= static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-		vector->y *= static_cast <float> (rand()) / static_cast <float> (RAND_MAX);*/
-		/* }
-
-		map->update_lump_pointers();*/
-
-
-	for (int lightId = 0; lightId < MAX_LIGHTMAPS; lightId++)
-	{
-		colordata = std::vector<COLOR3>();
-		int current_x = 0;
-		int current_y = 0;
-		int max_y_found = 0;
-
-		bool found_any_lightmap = false;
-
-		//print_log(get_localized_string(LANG_0411),lightId);
-		for (int faceIdx : faces_to_export)
+		for (const auto& e : entries)
 		{
-			if (map->faces[faceIdx].nLightmapOffset < 0 || map->faces[faceIdx].nStyles[lightId] == 255)
-				continue;
-
-			int size[2];
-			map->GetFaceLightmapSize((int)faceIdx, size);
-
-			int sizeX = size[0], sizeY = size[1];
-
-
+			int sizeX = e.w, sizeY = e.h;
 			int lightmapSz = sizeX * sizeY * sizeof(COLOR3);
+			int offset = map->faces[e.faceIdx].nLightmapOffset + lightId * lightmapSz;
 
-			int offset = map->faces[faceIdx].nLightmapOffset + lightId * lightmapSz;
+			COLOR3* src = nullptr;
+			if (map->lightdata && offset >= 0 && (size_t)offset + lightmapSz <= map->lightDataLength)
+				src = (COLOR3*)(map->lightdata + offset);
 
-			if (sizeY > max_y_found)
-				max_y_found = sizeY;
-
-			if (current_x + sizeX + 1 > LMapMaxWidth)
+			if (src)
 			{
-				current_y += max_y_found + 1;
-				max_y_found = sizeY;
-				current_x = 0;
+				DrawImageAtOneBigLightMap(src, sizeX, sizeY, e.x, e.y);
 			}
-
-			DrawImageAtOneBigLightMap((COLOR3*)(map->lightdata + offset), sizeX, sizeY, current_x, current_y);
-
-			current_x += sizeX + 1;
-
-			found_any_lightmap = true;
+			else
+			{
+				std::vector<COLOR3> tmp(sizeX * sizeY, COLOR3(0, 0, 255));
+				DrawImageAtOneBigLightMap(tmp.data(), sizeX, sizeY, e.x, e.y);
+			}
 		}
 
-		if (found_any_lightmap)
+		filename = fmt::format(fmt::runtime(get_localized_string(LANG_1061)),
+			g_working_dir.c_str(),
+			get_localized_string(LANG_1062),
+			lightId);
+		print_log(get_localized_string(LANG_0412), filename);
+
+		unsigned err = lodepng_encode24_file(filename.c_str(),
+			(const unsigned char*)colordata.data(),
+			LMapMaxWidth,
+			atlasHeight);
+		if (err)
 		{
-			filename = fmt::format(fmt::runtime(get_localized_string(LANG_1061)), g_working_dir.c_str(), get_localized_string(LANG_1062), lightId);
-			print_log(get_localized_string(LANG_0412), filename);
-			lodepng_encode24_file(filename.c_str(), (const unsigned char*)colordata.data(), LMapMaxWidth, current_y + max_y_found);
+			print_log(PRINT_RED | PRINT_INTENSITY, "lodepng encode error: %u", err);
 		}
 	}
-
 }
+
 
 void ExportLightmap(const BSPFACE32& face, int faceIdx, Bsp* map)
 {
@@ -11872,9 +12345,9 @@ void Gui::drawLightMapTool()
 					int offset = face->nLightmapOffset + i * lightmapSz;
 					light_offsets[i] = offset;
 					if (!map->lightdata || offset + lightmapSz > map->lightDataLength)
-						memset(currentlightMap[i]->get_data(), 255, lightmapSz);
+						memset(currentlightMap[i]->getData(), 255, lightmapSz);
 					else
-						memcpy(currentlightMap[i]->get_data(), map->lightdata + offset, lightmapSz);
+						memcpy(currentlightMap[i]->getData(), map->lightdata + offset, lightmapSz);
 					currentlightMap[i]->upload(Texture::TEXTURE_TYPE::TYPE_LIGHTMAP);
 					lightmap_count++;
 					//print_log(get_localized_string(LANG_0418),i,offset);
@@ -11964,7 +12437,7 @@ void Gui::drawLightMapTool()
 					if (offset < 0)
 						offset = 0;
 
-					COLOR3* lighdata = (COLOR3*)currentlightMap[i]->get_data();
+					COLOR3* lighdata = (COLOR3*)currentlightMap[i]->getData();
 
 					if (needPickColor)
 					{
@@ -12015,7 +12488,7 @@ void Gui::drawLightMapTool()
 							continue;
 						int lightmapSz = size[0] * size[1] * sizeof(COLOR3);
 						int offset = face->nLightmapOffset + i * lightmapSz;
-						memcpy(map->lightdata + offset, currentlightMap[i]->get_data(), lightmapSz);
+						memcpy(map->lightdata + offset, currentlightMap[i]->getData(), lightmapSz);
 					}
 					map->resize_all_lightmaps(true);
 					renderer->pushUndoState(get_localized_string(LANG_0599), FL_LIGHTING);
@@ -12454,7 +12927,6 @@ void Gui::drawFaceEditorWidget()
 		if (app->pickInfo.selectedFaces.size() == 1)
 		{
 			ImGui::Separator();
-			ImGui::Text(get_localized_string(LANG_0884).c_str());
 			if (ImGui::DragInt("# 1:", &tmpStyles[0], 1, 0, 255)) stylesChanged = true;
 			ImGui::SameLine();
 			if (ImGui::DragInt("# 2:", &tmpStyles[1], 1, 0, 255)) stylesChanged = true;
@@ -12503,6 +12975,9 @@ void Gui::drawFaceEditorWidget()
 				}
 				ImGui::SetClipboardText(outstr.c_str());
 			}
+
+
+			ImGui::Text("Lightmap offs: %X", map->faces[app->pickInfo.selectedFaces[0]].nLightmapOffset);
 		}
 
 		ImGui::PopItemWidth();
@@ -12552,16 +13027,15 @@ void Gui::drawFaceEditorWidget()
 					{
 						if (s->hasTexture(textureName))
 						{
-							WADTEX* wadTex = s->readTexture(textureName);
+							WADTEX wadTex = s->readTexture(textureName);
 							COLOR3* imageData = ConvertWadTexToRGB(wadTex);
 
 							validTexture = true;
-							newMiptex = map->add_texture(textureName, (unsigned char*)imageData, wadTex->nWidth, wadTex->nHeight);
+							newMiptex = map->add_texture(textureName, (unsigned char*)imageData, wadTex.nWidth, wadTex.nHeight);
 							mapRenderer->reuploadTextures();
 							mapRenderer->preRenderFaces();
 
 							delete[] imageData;
-							delete wadTex;
 						}
 					}
 				}
@@ -12989,7 +13463,7 @@ void Gui::drawFaceEditorWidget()
 				ImGui::TextUnformatted("Used in leaves:");
 				style.FrameBorderSize = 1.0f;
 
-				ImGui::BeginChild("##faceleaflist", ImVec2(0, 120), ImGuiChildFlags_Border, ImGuiWindowFlags_HorizontalScrollbar);
+				ImGui::BeginChild("##faceleaflist", ImVec2(0, 120), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
 
 				ImGuiListClipper leaf_clipper;
 				leaf_clipper.Begin((int)face_leaf_list.size());
@@ -13208,7 +13682,7 @@ void Gui::drawFaceEditorWidget()
 				pickCount++;
 			}
 
-			ImGui::BeginChild("##leaffacelist", ImVec2(0, 120), ImGuiChildFlags_Border, ImGuiWindowFlags_HorizontalScrollbar);
+			ImGui::BeginChild("##leaffacelist", ImVec2(0, 120), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
 
 			ImGuiListClipper face_clipper;
 			face_clipper.Begin((int)leaf_faces.size());
@@ -13252,7 +13726,7 @@ void Gui::drawFaceEditorWidget()
 
 			style.FrameBorderSize = 1.0f;
 
-			ImGui::BeginChild("##leaflist", ImVec2(0, 240), ImGuiChildFlags_Border, ImGuiWindowFlags_HorizontalScrollbar);
+			ImGui::BeginChild("##leaflist", ImVec2(0, 240), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
 
 			ImGuiListClipper clipper;
 			clipper.Begin((int)(vis_leafs.size() + invis_leafs.size()));

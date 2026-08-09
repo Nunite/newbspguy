@@ -79,12 +79,14 @@ struct vec3
 		Copy(other);
 	}
 
-	~vec3() = default;
-
 	vec3(vec3&& other) noexcept : x(other.x), y(other.y), z(other.z) {
 		other.x = 0;
 		other.y = 0;
 		other.z = 0;
+	}
+
+	vec3 operator-() const {
+		return *this * -1;
 	}
 
 	vec3& operator=(const vec3& other) {
@@ -183,11 +185,11 @@ struct vec3
 	bool operator==(const vec3& other) const
 	{
 		vec3 v = *this - other;
-		if (std::fabs(v.x) >= EPSILON)
+		if (std::fabs(v.x) >= EPSILON2)
 			return false;
-		if (std::fabs(v.y) >= EPSILON)
+		if (std::fabs(v.y) >= EPSILON2)
 			return false;
-		if (std::fabs(v.z) >= EPSILON)
+		if (std::fabs(v.z) >= EPSILON2)
 			return false;
 		return true;
 	}
@@ -195,15 +197,18 @@ struct vec3
 	bool operator!=(const vec3& other) const
 	{
 		vec3 v = *this - other;
-		if (std::fabs(v.x) >= EPSILON)
+		if (std::fabs(v.x) >= EPSILON2)
 			return true;
-		if (std::fabs(v.y) >= EPSILON)
+		if (std::fabs(v.y) >= EPSILON2)
 			return true;
-		if (std::fabs(v.z) >= EPSILON)
+		if (std::fabs(v.z) >= EPSILON2)
 			return true;
 		return false;
 	}
 
+	bool operator<(const vec3& b) const {
+		return std::tie(x, y, z) < std::tie(b.x, b.y, b.z);
+	}
 
 	vec3 normalize(float length = 1.0f)  const;
 	vec3 snap(float snapSize);
@@ -247,7 +252,8 @@ struct vec3Hash {
 	}
 };
 
-struct pairHash {
+
+struct vec3PairHash {
 	template <typename T1, typename T2>
 	size_t operator()(const std::pair<T1, T2>& p) const {
 		size_t seed = 2;
@@ -268,13 +274,8 @@ bool isPointInFace(const vec3& point, const std::vector<vec3>& faceVertices);
 struct vec2
 {
 	float x, y;
-	vec2() : x(0), y(0)
-	{
-		if (std::fabs(x) < EPSILON)
-			x = +0.0f;
-		if (std::fabs(y) < EPSILON)
-			y = +0.0f;
-	}
+	vec2() : x(0), y(0) {};
+
 	vec2(float x, float y) : x(x), y(y)
 	{
 		if (std::fabs(x) < EPSILON)
@@ -319,7 +320,7 @@ struct vec4
 {
 	float x, y, z, w;
 
-	vec4() : x(+0.0f), y(+0.0f), z(+0.0f), w(+0.0f)
+	vec4() : x(0), y(0), z(0), w(0)
 	{
 	}
 	vec4(float x, float y, float z) : x(x), y(y), z(z), w(1)

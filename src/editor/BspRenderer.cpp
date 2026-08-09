@@ -198,6 +198,12 @@ BspRenderer::BspRenderer(Bsp* _map) : undoLumpState(LumpState(_map))
 		}
 	}
 
+	// cache ent targets so first selection doesn't lag
+	for (size_t i = 0; i < map->ents.size(); i++)
+	{
+		map->ents[i]->getTargets();
+	}
+
 	if (g_app->getSelectedMap() == NULL || map == g_app->getSelectedMap())
 	{
 		cameraOrigin = renderCameraOrigin;
@@ -205,8 +211,10 @@ BspRenderer::BspRenderer(Bsp* _map) : undoLumpState(LumpState(_map))
 	}
 
 	renderEnts.clear();
+
 	for (auto& r : renderModels)
 		delete r;
+
 	renderModels.clear();
 	renderClipnodes.clear();
 
@@ -216,21 +224,15 @@ BspRenderer::BspRenderer(Bsp* _map) : undoLumpState(LumpState(_map))
 	clipnodesBufferCache.clear();
 	g_mutex_list[2].unlock();
 	clearDrawCache();
-	//loadTextures();
+
+	reuploadTextures();
 	//loadLightmaps();
 	preRenderEnts();
 	preRenderFaces();
 	calcFaceMaths();
 
 	lightmapFuture = std::async(std::launch::async, &BspRenderer::loadLightmaps, this);
-	texturesFuture = std::async(std::launch::async, &BspRenderer::loadTextures, this);
 	clipnodesFuture = std::async(std::launch::async, &BspRenderer::loadClipnodes, this);
-
-	// cache ent targets so first selection doesn't lag
-	for (size_t i = 0; i < map->ents.size(); i++)
-	{
-		map->ents[i]->getTargets();
-	}
 
 	undoLumpState = map->duplicate_lumps();
 }
@@ -421,14 +423,15 @@ void BspRenderer::loadTextures()
 		}
 
 
+		WADTEX wadTex;
+		bool foundInWad = false;
 		for (auto& tex_name : texNames)
 		{
 			COLOR3* imageData = NULL;
-			WADTEX* wadTex = NULL;
 			std::string wadName = "unknown.wad";
 			if (tex->nOffsets[0] <= 0)
 			{
-				bool foundInWad = false;
+				foundInWad = false;
 				for (size_t k = 0; k < wads.size(); k++)
 				{
 					if (wads[k]->hasTexture(tex_name))
@@ -487,9 +490,9 @@ void BspRenderer::loadTextures()
 
 			if (imageData)
 			{
-				if (wadTex)
+				if (foundInWad)
 				{
-					Texture* tmpTex = new Texture(wadTex->nWidth, wadTex->nHeight, (unsigned char*)imageData, tex_name);
+					Texture* tmpTex = new Texture(wadTex.nWidth, wadTex.nHeight, (unsigned char*)imageData, tex_name);
 					tmpTex->setWadName(wadName);
 					glTexturesSwap[i].push_back(tmpTex);
 				}
@@ -508,8 +511,6 @@ void BspRenderer::loadTextures()
 					missingCount++;
 				}
 			}
-
-			delete wadTex;
 		}
 
 		if (glTexturesSwap[i].empty())
@@ -539,7 +540,7 @@ void BspRenderer::reload()
 
 void BspRenderer::reloadTextures()
 {
-	if (texturesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+	if (!texturesFuture.valid() || texturesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
 	{
 		texturesLoaded = false;
 		texturesFuture = std::async(std::launch::async, &BspRenderer::loadTextures, this);
@@ -548,7 +549,7 @@ void BspRenderer::reloadTextures()
 
 void BspRenderer::reloadLightmaps()
 {
-	if (lightmapFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+	if (!lightmapFuture.valid() || lightmapFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
 	{
 		lightmapsGenerated = false;
 		lightmapsUploaded = false;
@@ -564,7 +565,7 @@ void BspRenderer::reloadLightmaps()
 
 void BspRenderer::reloadClipnodes()
 {
-	if (clipnodesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+	if (!clipnodesFuture.valid() || clipnodesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
 	{
 		clipnodesLoaded = false;
 		clipnodeLeafCount = 0;
@@ -619,7 +620,7 @@ void BspRenderer::loadLightmaps()
 	atlasTextures.push_back(new Texture(MAX_LIGHTMAP_ATLAS_SIZE, MAX_LIGHTMAP_ATLAS_SIZE,
 		new unsigned char[MAX_LIGHTMAP_ATLAS_SIZE * MAX_LIGHTMAP_ATLAS_SIZE * sizeof(COLOR3)], "LIGHTMAP"));
 
-	memset(atlasTextures[atlasTextures.size() - 1]->get_data(), 255, MAX_LIGHTMAP_ATLAS_SIZE * MAX_LIGHTMAP_ATLAS_SIZE * sizeof(COLOR3));
+	memset(atlasTextures[atlasTextures.size() - 1]->getData(), 255, MAX_LIGHTMAP_ATLAS_SIZE * MAX_LIGHTMAP_ATLAS_SIZE * sizeof(COLOR3));
 
 	numRenderLightmapInfos = map->faceCount;
 	if (lightmaps)
@@ -702,7 +703,7 @@ void BspRenderer::loadLightmaps()
 					atlasTextures.push_back(new Texture(MAX_LIGHTMAP_ATLAS_SIZE, MAX_LIGHTMAP_ATLAS_SIZE, new unsigned char[MAX_LIGHTMAP_ATLAS_SIZE * MAX_LIGHTMAP_ATLAS_SIZE * sizeof(COLOR3)], "LIGHTMAP"));
 
 					atlasId++;
-					memset(atlasTextures[atlasId]->get_data(), 255, MAX_LIGHTMAP_ATLAS_SIZE * MAX_LIGHTMAP_ATLAS_SIZE * sizeof(COLOR3));
+					memset(atlasTextures[atlasId]->getData(), 255, MAX_LIGHTMAP_ATLAS_SIZE * MAX_LIGHTMAP_ATLAS_SIZE * sizeof(COLOR3));
 
 					if (!atlases[atlasId].insert(info.w, info.h, info.x[s], info.y[s]))
 					{
@@ -719,7 +720,7 @@ void BspRenderer::loadLightmaps()
 				int offset = face.nLightmapOffset + s * lightmapSz;
 
 				COLOR3* lightSrc = (COLOR3*)(map->lightdata + offset);
-				COLOR3* lightDst = (COLOR3*)(atlasTextures[atlasId]->get_data());
+				COLOR3* lightDst = (COLOR3*)(atlasTextures[atlasId]->getData());
 				for (int y = 0; y < info.h; y++)
 				{
 					for (int x = 0; x < info.w; x++)
@@ -790,7 +791,7 @@ void BspRenderer::preRenderFaces()
 		for (auto& g : model->renderGroups)
 		{
 			if (g.buffer)
-				g.buffer->uploaded = false;
+				g.buffer->reupload();
 		}
 	}
 	for (auto f : g_app->pickInfo.selectedFaces)
@@ -1235,24 +1236,27 @@ int BspRenderer::refreshModel(int modelIdx, bool refreshClipnodes, bool triangul
 		if (renderGroupVerts[i].size() > 0)
 			memcpy(result_verts, &renderGroupVerts[i][0], renderGroupVerts[i].size() * sizeof(lightmapVert));
 
-		renderModel->renderGroups[i].buffer = new VertexBuffer(g_app->bspShader, result_verts, (int)(renderGroupVerts[i].size()), GL_TRIANGLES);
-		renderModel->renderGroups[i].buffer->ownData = true;
+		renderModel->renderGroups[i].buffer = new VertexBuffer(g_app->bspShader, result_verts, (int)(renderGroupVerts[i].size()), GL_TRIANGLES, true);
 		renderModel->renderGroups[i].buffer->frameId = 0;
 	}
 
 	if (wireframeVerts_full.size())
 	{
+		using namespace std::chrono; 
+		auto start = high_resolution_clock::now();
 		std::vector<cVert> cleanupWireframe = removeDuplicateWireframeLines(wireframeVerts_full);
-
-#ifdef _DEBUG
+		auto end = high_resolution_clock::now();
+		auto durationMs = duration_cast<milliseconds>(end - start).count();
 		if (g_settings.verboseLogs)
-			print_log("Optimize wireframe {} model: {} to {} lines.\n", modelIdx, wireframeVerts_full.size(), cleanupWireframe.size());
-#endif
+		{
+			print_log("Optimize wireframe of {} model: {} to {} lines ({} ms).\n", modelIdx, wireframeVerts_full.size(), cleanupWireframe.size(), durationMs);
+			FlushConsoleLog(true);
+		}
+
 		cVert* resultWireFrame = new cVert[cleanupWireframe.size()];
 		memcpy(resultWireFrame, cleanupWireframe.data(), cleanupWireframe.size() * sizeof(cVert));
 
-		renderModel->wireframeBuffer = new VertexBuffer(g_app->colorShader, resultWireFrame, (int)(cleanupWireframe.size()), GL_LINES);
-		renderModel->wireframeBuffer->ownData = true;
+		renderModel->wireframeBuffer = new VertexBuffer(g_app->colorShader, resultWireFrame, (int)(cleanupWireframe.size()), GL_LINES,true);
 		renderModel->wireframeBuffer->frameId = 0;
 	}
 
@@ -1454,11 +1458,9 @@ void BspRenderer::generateNavMeshBuffer() {
 		return;
 	}
 
-	renderClip->clipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, output, (int)allVerts.size(), GL_TRIANGLES);
-	renderClip->clipnodeBuffer[hull]->ownData = true;
+	renderClip->clipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, output, (int)allVerts.size(), GL_TRIANGLES,true);
 
-	renderClip->wireframeClipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, wireOutput, (int)wireframeVerts.size(), GL_LINES);
-	renderClip->wireframeClipnodeBuffer[hull]->ownData = true;
+	renderClip->wireframeClipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, wireOutput, (int)wireframeVerts.size(), GL_LINES,true);
 
 	renderClip->faceMaths[hull] = std::move(navFaceMaths);
 
@@ -1588,11 +1590,9 @@ void BspRenderer::generateLeafNavMeshBuffer() {
 		return;
 	}
 
-	renderClip->clipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, output, (int)allVerts.size(), GL_TRIANGLES);
-	renderClip->clipnodeBuffer[hull]->ownData = true;
+	renderClip->clipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, output, (int)allVerts.size(), GL_TRIANGLES,true);
 
-	renderClip->wireframeClipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, wireOutput, (int)wireframeVerts.size(), GL_LINES);
-	renderClip->wireframeClipnodeBuffer[hull]->ownData = true;
+	renderClip->wireframeClipnodeBuffer[hull] = new VertexBuffer(g_app->colorShader, wireOutput, (int)wireframeVerts.size(), GL_LINES,true);
 
 	renderClip->faceMaths[hull] = std::move(navFaceMaths);
 }
@@ -1839,12 +1839,10 @@ void BspRenderer::generateClipnodeBufferForHull(int modelIdx, int hullIdx)
 	cVert* wireOutput = new cVert[wireframeVerts.size()];
 	std::copy(wireframeVerts.begin(), wireframeVerts.end(), wireOutput);
 
-	renderClip.clipnodeBuffer[hullIdx] = new VertexBuffer(g_app->colorShader, output, (int)(allVerts.size()), GL_TRIANGLES);
-	renderClip.clipnodeBuffer[hullIdx]->ownData = true;
+	renderClip.clipnodeBuffer[hullIdx] = new VertexBuffer(g_app->colorShader, output, (int)(allVerts.size()), GL_TRIANGLES,true);
 	renderClip.clipnodeBuffer[hullIdx]->frameId = 0;
 
-	renderClip.wireframeClipnodeBuffer[hullIdx] = new VertexBuffer(g_app->colorShader, wireOutput, (int)(wireframeVerts.size()), GL_LINES);
-	renderClip.wireframeClipnodeBuffer[hullIdx]->ownData = true;
+	renderClip.wireframeClipnodeBuffer[hullIdx] = new VertexBuffer(g_app->colorShader, wireOutput, (int)(wireframeVerts.size()), GL_LINES,true);
 	renderClip.wireframeClipnodeBuffer[hullIdx]->frameId = 0;
 
 	nodeBuffStr curHullIdxStruct = nodeBuffStr();
@@ -1865,7 +1863,7 @@ void BspRenderer::generateClipnodeBufferForHull(int modelIdx, int hullIdx)
 
 void BspRenderer::generateClipnodeBuffer(int modelIdx)
 {
-	if (!map || modelIdx < 0)
+	if (!map || modelIdx < 0 || modelIdx >= map->modelCount)
 		return;
 
 	for (int hullIdx = 0; hullIdx < MAX_MAP_HULLS; hullIdx++)
@@ -1900,14 +1898,14 @@ void BspRenderer::updateClipnodeOpacity(unsigned char newValue)
 		for (int k = 0; k < MAX_MAP_HULLS; k++)
 		{
 			VertexBuffer* clipBuf = clip.clipnodeBuffer[k];
-			if (clipBuf && clipBuf->get_data() && clipBuf->numVerts > 0)
+			if (clipBuf && clipBuf->getData() && clipBuf->numVerts > 0)
 			{
-				cVert* vertData = (cVert*)clipBuf->get_data();
+				cVert* vertData = (cVert*)clipBuf->getData();
 				for (int v = 0; v < clipBuf->numVerts; v++)
 				{
 					vertData[v].c.a = newValue;
 				}
-				clip.clipnodeBuffer[k]->uploaded = false;
+				clip.clipnodeBuffer[k]->reupload();
 			}
 		}
 	}
@@ -1915,6 +1913,7 @@ void BspRenderer::updateClipnodeOpacity(unsigned char newValue)
 
 void BspRenderer::preRenderEnts()
 {
+	renderEnts.clear();
 	renderEnts.resize(map->ents.size(), RenderEnt());
 
 	for (int i = 0; i < (int)map->ents.size(); i++)
@@ -2194,7 +2193,10 @@ void BspRenderer::refreshEnt(int entIdx, int refreshFlags)
 						if (FindPathInAssets(map, modelpath, newModelPath))
 						{
 							rendEntity.mdl = AddNewModelToRender(newModelPath, body + sequence * 100 + skin * 1000);
-							rendEntity.mdl->UpdateModelMeshList();
+							if (rendEntity.mdl->m_pstudiohdr)
+								rendEntity.mdl->UpdateModelMeshList();
+							else 
+								rendEntity.mdl = NULL;
 						}
 						else
 						{
@@ -2513,8 +2515,7 @@ void BspRenderer::reuploadTextures()
 	deleteTextures();
 
 	//loadTextures();
-
-	glTextures = glTexturesSwap;
+	glTextures.swap(glTexturesSwap);
 	glTexturesSwap.clear();
 
 	for (size_t i = 0; i < glTextures.size(); i++)
@@ -2524,12 +2525,19 @@ void BspRenderer::reuploadTextures()
 	}
 
 	texturesLoaded = true;
-
 	needReloadDebugTextures = true;
 }
 
 void BspRenderer::delayLoadData()
 {
+	if (!texturesLoaded && texturesFuture.valid() && texturesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+	{
+		reuploadTextures();
+		preRenderFaces();
+		texturesLoaded = true;
+	}
+
+
 	if (!lightmapsUploaded && lightmapFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
 	{
 		for (int i = 0; i < glLightmapTextures.size(); i++)
@@ -2539,13 +2547,6 @@ void BspRenderer::delayLoadData()
 		}
 		preRenderFaces();
 		lightmapsUploaded = true;
-	}
-
-	if (!texturesLoaded && texturesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
-	{
-		reuploadTextures();
-		preRenderFaces();
-		texturesLoaded = true;
 	}
 
 	if (!clipnodesLoaded && clipnodesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
@@ -2558,7 +2559,7 @@ void BspRenderer::delayLoadData()
 				{
 					if (clip.clipnodeBuffer[k])
 					{
-						clip.clipnodeBuffer[k]->uploaded = false;
+						clip.clipnodeBuffer[k]->reupload();
 					}
 				}
 			}
@@ -2608,7 +2609,7 @@ void BspRenderer::highlightFace(int faceIdx, int highlight, bool reupload)
 		b = 0.15f;
 	}
 
-	auto verts = ((lightmapVert*)rgroup->buffer->get_data());
+	auto verts = ((lightmapVert*)rgroup->buffer->getData());
 
 	for (int i = 0; i < rface->vertCount; i++)
 	{
@@ -2617,7 +2618,7 @@ void BspRenderer::highlightFace(int faceIdx, int highlight, bool reupload)
 		verts[rface->vertOffset + i].b = b;
 	}
 	if (reupload)
-		rgroup->buffer->uploaded = false;
+		rgroup->buffer->reupload();
 }
 
 void BspRenderer::updateFaceUVs(int faceIdx)
@@ -2639,7 +2640,7 @@ void BspRenderer::updateFaceUVs(int faceIdx)
 		{
 			BSPMIPTEX& tex = *((BSPMIPTEX*)(map->textures + texOffset));
 
-			auto verts = ((lightmapVert*)rgroup->buffer->get_data());
+			auto verts = ((lightmapVert*)rgroup->buffer->getData());
 
 			for (int i = 0; i < rface->vertCount; i++)
 			{
@@ -2653,11 +2654,9 @@ void BspRenderer::updateFaceUVs(int faceIdx)
 				vert.u = fU * tw;
 				vert.v = fV * th;
 			}
-			rgroup->buffer->uploaded = false;
+			rgroup->buffer->reupload();
 		}
 	}
-
-	rgroup->buffer->uploaded = false;
 }
 
 bool BspRenderer::getRenderPointers(int faceIdx, RenderFace** renderFace, RenderGroup** renderGroup)
@@ -2693,11 +2692,7 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 
 	g_app->matmodel.loadIdentity();
 	g_app->matmodel.translate(renderOffset.x, renderOffset.y, renderOffset.z);
-	g_app->colorShader->updateMatrixes();
-
-	g_app->matmodel.loadIdentity();
-	g_app->matmodel.translate(renderOffset.x, renderOffset.y, renderOffset.z);
-	g_app->bspShader->updateMatrixes();
+	g_app->mat_upload();
 
 	static double leafUpdTime = 0.0;
 
@@ -2776,18 +2771,19 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 		drawPointEntities(highlightEnts, REND_PASS_MODELSHADER);
 	}
 
+	size_t ent_count = renderEnts.size();
+
+
 	for (int pass = 0; pass <= 2; pass++)
 	{
 		if (pass != REND_PASS_MODELSHADER)
 		{
-			g_app->bspShader->bind();
-			g_app->bspShader->updateMatrixes();
+			g_app->mat_upload();
 
-			if (!map->ents.empty() && !map->ents[0]->hide)
-				drawModel(0, pass, false, false);
+			if (ent_count && !map->ents[0]->hide)
+				drawModel(&renderEnts[0], pass, false, false);
 
-			size_t ent_count = std::min(map->ents.size(), renderEnts.size());
-			for (int i = 0; i < (int)ent_count; i++)
+			for (int i = 1; i < (int)ent_count; i++)
 			{
 				if (map->ents[i]->hide)
 					continue;
@@ -2799,7 +2795,7 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 					{
 						g_app->bspShader->pushMatrix();
 						g_app->matmodel = renderEnts[i].modelMat4x4_calc;
-						g_app->bspShader->updateMatrixes();
+						g_app->mat_upload();
 
 						drawModel(&renderEnts[i], pass, true, false);
 						g_app->bspShader->popMatrix();
@@ -2809,11 +2805,9 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 				}
 				else
 				{
-					if (renderEnts[i].modelIdx >= 0 && renderEnts[i].modelIdx < map->modelCount)
+					if (renderEnts[i].modelIdx > 0 && renderEnts[i].modelIdx < map->modelCount)
 					{
-						g_app->bspShader->pushMatrix();
 						drawModel(&renderEnts[i], pass, false, false);
-						g_app->bspShader->popMatrix();
 					}
 				}
 			}
@@ -2826,11 +2820,10 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 		{
 			if (!map->ents[0]->hide)
 			{
-				g_app->colorShader->bind();
 				g_app->colorShader->pushMatrix();
 				g_app->matmodel.loadIdentity();
 				g_app->matmodel.translate(renderOffset.x, renderOffset.y, renderOffset.z);
-				g_app->colorShader->updateMatrixes();
+				g_app->mat_upload();
 				drawModelClipnodes(0, false, clipnodeHull);
 				g_app->colorShader->popMatrix();
 			}
@@ -2850,10 +2843,9 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 					{
 						continue; // skip rendering for models that have faces, if in auto mode
 					}
-					g_app->colorShader->bind();
 					g_app->colorShader->pushMatrix();
 					g_app->matmodel = renderEnts[i].modelMat4x4_calc_angles;
-					g_app->colorShader->updateMatrixes();
+					g_app->mat_upload();
 
 					bool hightlighted = g_app->pickInfo.IsSelectedEnt(i);
 
@@ -2891,14 +2883,11 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 		{
 			if (pass == REND_PASS_MODELSHADER)
 				continue;
-
-			g_app->bspShader->bind();
-			g_app->bspShader->updateMatrixes();
 			for (int highlightEnt : highlightEnts)
 			{
 				if (map->ents[highlightEnt]->hide)
 					continue;
-				if (renderEnts[highlightEnt].modelIdx >= 0 && renderEnts[highlightEnt].modelIdx < map->modelCount)
+				if (renderEnts[highlightEnt].modelIdx > 0 && renderEnts[highlightEnt].modelIdx < map->modelCount)
 				{
 					drawModel(&renderEnts[highlightEnt], pass, true, false);
 				}
@@ -2924,10 +2913,9 @@ void BspRenderer::render(bool modelVertsDraw, int clipnodeHull)
 		glDepthFunc(GL_ALWAYS);
 		glDisable(GL_CULL_FACE);
 		glLineWidth(std::min(g_app->lineWidthRange[1], 2.0f));
-		g_app->colorShader->bind();
 		g_app->matmodel.loadIdentity();
 		g_app->matmodel.translate(renderOffset.x, renderOffset.y, renderOffset.z);
-		g_app->colorShader->updateMatrixes();
+		g_app->mat_upload();
 		leafCube->wireframeBuffer->drawFull();
 		glLineWidth(std::min(g_app->lineWidthRange[1], 3.0f));
 		nodeCube->wireframeBuffer->drawFull();/*
@@ -3036,7 +3024,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 				if (highlight && !rend_mdl->highlighted)
 				{
 					rend_mdl->highlighted = true;
-					auto wireframeVerts = (cVert*)rend_mdl->wireframeBuffer->get_data();
+					auto wireframeVerts = (cVert*)rend_mdl->wireframeBuffer->getData();
 					for (int n = 0; n < rend_mdl->wireframeBuffer->numVerts; n++)
 					{
 						wireframeVerts[n].c = COLOR4(245, 212, 66, 255);
@@ -3045,7 +3033,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 				else if (!highlight && rend_mdl->highlighted)
 				{
 					rend_mdl->highlighted = false;
-					auto wireframeVerts = (cVert*)rend_mdl->wireframeBuffer->get_data();
+					auto wireframeVerts = (cVert*)rend_mdl->wireframeBuffer->getData();
 					if (modelIdx > 0)
 					{
 						for (int n = 0; n < rend_mdl->wireframeBuffer->numVerts; n++)
@@ -3061,7 +3049,6 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 						}
 					}
 				}
-
 				g_app->colorShader->pushMatrix();
 
 				if (g_app->pickMode != PICK_OBJECT && highlight)
@@ -3069,7 +3056,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 					if (ent)
 					{
 						g_app->matmodel = ent->modelMat4x4_calc;
-						g_app->colorShader->updateMatrixes();
+						g_app->mat_upload();
 					}
 					rend_mdl->wireframeBuffer->drawFull();
 				}
@@ -3079,7 +3066,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 					{
 						glLineWidth(std::min(g_app->lineWidthRange[1], 2.5f));
 						g_app->matmodel = ent->modelMat4x4_calc;
-						g_app->colorShader->updateMatrixes();
+						g_app->mat_upload();
 						rend_mdl->wireframeBuffer->drawFull();
 						rend_mdl->wireframeBuffer->frameId--;
 						glLineWidth(1.3f);
@@ -3087,7 +3074,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 					else
 					{
 						g_app->matmodel = ent->modelMat4x4_calc;
-						g_app->colorShader->updateMatrixes();
+						g_app->mat_upload();
 						rend_mdl->wireframeBuffer->drawFull();
 					}
 				}
@@ -3096,7 +3083,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 					if (ent)
 					{
 						g_app->matmodel = ent->modelMat4x4_calc;
-						g_app->colorShader->updateMatrixes();
+						g_app->mat_upload();
 					}
 					rend_mdl->wireframeBuffer->drawFull();
 				}
@@ -3135,7 +3122,6 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 				if (ent && ent->isDuplicateModel)
 					rgroup.buffer->frameId--;
 
-				g_app->bspShader->bind();
 				g_app->bspShader->pushMatrix();
 
 				if (texturesLoaded && g_render_flags & RENDER_TEXTURES && !rgroup.textures.empty())
@@ -3202,7 +3188,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 					if (ent)
 					{
 						g_app->matmodel = ent->modelMat4x4_calc;
-						g_app->bspShader->updateMatrixes();
+						g_app->mat_upload();
 					}
 
 					rgroup.buffer->drawFull();
@@ -3214,7 +3200,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 						if (ent)
 						{
 							g_app->matmodel = ent->modelMat4x4_calc;
-							g_app->bspShader->updateMatrixes();
+							g_app->mat_upload();
 						}
 						rgroup.buffer->drawFull();
 					}
@@ -3223,7 +3209,7 @@ void BspRenderer::drawModel(RenderEnt* ent, int pass, bool highlight, bool edges
 						if (ent)
 						{
 							g_app->matmodel = ent->modelMat4x4_calc_angles;
-							g_app->bspShader->updateMatrixes();
+							g_app->mat_upload();
 						}
 						rgroup.buffer->drawFull();
 					}
@@ -3273,7 +3259,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 				if (pass == REND_PASS_MODELSHADER)
 				{
 					g_app->matmodel = renderEnts[i].modelMat4x4_calc_angles;
-					g_app->modelShader->updateMatrixes();
+					g_app->mat_upload();
 
 					if (renderEnts[i].mdl)
 					{
@@ -3287,7 +3273,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 				else if (pass == REND_PASS_COLORSHADER && !ortho_overview && !make_screenshot)
 				{
 					g_app->matmodel = renderEnts[i].modelMat4x4_calc_angles;
-					g_app->colorShader->updateMatrixes();
+					g_app->mat_upload();
 
 					if (renderEnts[i].mdl && renderEnts[i].mdl->mdl_cube)
 					{
@@ -3308,7 +3294,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 				if (pass == REND_PASS_COLORSHADER && !ortho_overview && !make_screenshot)
 				{
 					g_app->matmodel = renderEnts[i].modelMat4x4_calc_angles;
-					g_app->colorShader->updateMatrixes();
+					g_app->mat_upload();
 
 					renderEnts[i].pointEntCube->axesBuffer->drawFull();
 
@@ -3333,7 +3319,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 				if (pass == REND_PASS_MODELSHADER)
 				{
 					g_app->matmodel = renderEnts[i].modelMat4x4_calc_angles;
-					g_app->modelShader->updateMatrixes();
+					g_app->mat_upload();
 
 
 					if (renderEnts[i].mdl)
@@ -3355,7 +3341,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 				else if (pass == REND_PASS_COLORSHADER)
 				{
 					//g_app->matmodel = renderEnts[i].modelMat4x4_calc_angles;
-					//g_app->colorShader->updateMatrixes();
+					//g_app->mat_upload();
 
 					///*if (renderEnts[i].mdl && renderEnts[i].mdl->mdl_cube)
 					//{
@@ -3369,7 +3355,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 				if (pass == REND_PASS_COLORSHADER && !ortho_overview && !make_screenshot)
 				{
 					g_app->matmodel = renderEnts[i].modelMat4x4_calc_angles;
-					g_app->colorShader->updateMatrixes();
+					g_app->mat_upload();
 
 					renderEnts[i].pointEntCube->axesBuffer->drawFull();
 
@@ -3670,6 +3656,11 @@ int BspRenderer::getBestClipnodeHull(int modelIdx)
 	if (!clipnodesLoaded)
 	{
 		return -1;
+	}
+
+	if (modelIdx >= renderClipnodes.size())
+	{
+		addClipnodeModel(modelIdx);
 	}
 
 	RenderClipnodes& clip = renderClipnodes[modelIdx];
